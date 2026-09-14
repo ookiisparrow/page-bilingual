@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "双语网页",
   "short_name": "双语",
-  "version": "1.4.51",
+  "version": "1.4.52",
   "description": "一键整页替换翻译；DeepSeek / Cursor bridge。",
   "minimum_chrome_version": "116",
   "icons": {
@@ -77,5 +77,6 @@
       },
       "description": "浮钮可拖缩小。翻译当前输入框"
     }
-  }
+  },
+  "version_name": "grok bot构筑版"
 }
