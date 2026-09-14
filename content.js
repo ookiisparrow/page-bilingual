@@ -1538,13 +1538,23 @@
     return false;
   }
 
-  /** 已收集集合中：含其它已收集后代的祖先一律丢掉 */
+  function isCollectBlock(el) {
+    try {
+      return !!el?.matches?.(BLOCKS);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Prefer BLOCK units (p/h/li) over descendant leaves; still drop non-block wrappers. */
   function pruneAncestorBlocks(blocks) {
     if (!blocks.length) return blocks;
     const els = blocks.map((b) => b.el);
     return blocks.filter(({ el }) => {
       for (const other of els) {
-        if (other !== el && el.contains(other)) return false;
+        if (other === el) continue;
+        if (other.contains(el) && isCollectBlock(other)) return false;
+        if (el.contains(other) && !isCollectBlock(el)) return false;
       }
       return true;
     });
@@ -1561,6 +1571,7 @@
         const seen = new Set(out.map((b) => b.el));
         for (const b of extra) {
           if (seen.has(b.el)) continue;
+          if (out.some((a) => a.el.contains(b.el) && isCollectBlock(a.el))) continue;
           seen.add(b.el);
           out.push(b);
         }
@@ -2222,17 +2233,40 @@
     }
   }
 
-  /** 整页替换：叶文本 / 安全整替；不安全则 false（勿 textContent 毁结构） */
+  const hostTextSnaps = new WeakMap();
+
+  function hostTextNodes(el) {
+    const nodes = [];
+    if (!el) return nodes;
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        if (!n.textContent || !n.textContent.trim()) return NodeFilter.FILTER_REJECT;
+        const p = n.parentElement;
+        if (p && p.closest("script,style,noscript,svg,math,code,pre,.pbt-tr")) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let n;
+    while ((n = walk.nextNode())) nodes.push(n);
+    return nodes;
+  }
+
+  /** Put the full translation in the first text node; clear sibling text so mixed inline stays one language. */
+  function swapHostTexts(el, translatedText) {
+    const nodes = hostTextNodes(el);
+    if (!nodes.length) return false;
+    if (!hostTextSnaps.has(el)) hostTextSnaps.set(el, nodes.map((n) => ({ n, t: n.textContent })));
+    nodes[0].textContent = translatedText;
+    for (let i = 1; i < nodes.length; i++) nodes[i].textContent = "";
+    el.classList.add("pbt-text-swap");
+    return true;
+  }
+
+  /** 整页替换：全部宿主文本 / 安全整替；不安全则 false（勿 textContent 毁结构） */
   function applyHostTranslation(el, translatedText) {
     if (!el) return false;
     if (el.dataset.pbtOrigText == null) el.dataset.pbtOrigText = textOf(el);
-    const leaf = findPrimaryTextNode(el);
-    if (leaf) {
-      if (el.dataset.pbtLeafOrig == null) el.dataset.pbtLeafOrig = leaf.textContent;
-      leaf.textContent = translatedText;
-      el.classList.add("pbt-text-swap");
-      return true;
-    }
+    if (swapHostTexts(el, translatedText)) return true;
     if (canSafelyReplaceText(el)) {
       el.textContent = translatedText;
       el.classList.add("pbt-text-swap");
@@ -2280,29 +2314,6 @@
     }
   }
 
-  function findPrimaryTextNode(el) {
-    if (!el) return null;
-    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-      acceptNode(n) {
-        if (!n.textContent || !n.textContent.trim()) return NodeFilter.FILTER_REJECT;
-        const p = n.parentElement;
-        if (p && p.closest("script,style,noscript,svg,math,code,pre,.pbt-tr")) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    let best = null;
-    let bestLen = 0;
-    let n;
-    while ((n = walk.nextNode())) {
-      const len = n.textContent.trim().length;
-      if (len > bestLen) {
-        best = n;
-        bestLen = len;
-      }
-    }
-    return best;
-  }
-
   function hasInteractiveDescBeyondIcons(el) {
     return !!el.querySelector(
       "a[href],button,input,textarea,select,[role='button']:not([role='menuitem']):not([role='option']):not([role='treeitem'])"
@@ -2311,8 +2322,15 @@
 
   function restoreTextSwap(el) {
     if (el.dataset.pbtOrigText == null) return;
-    if (el.dataset.pbtLeafOrig != null) {
-      const leaf = findPrimaryTextNode(el);
+    const snap = hostTextSnaps.get(el);
+    if (snap) {
+      for (const { n, t } of snap) {
+        if (n) n.textContent = t;
+      }
+      hostTextSnaps.delete(el);
+      delete el.dataset.pbtLeafOrig;
+    } else if (el.dataset.pbtLeafOrig != null) {
+      const leaf = hostTextNodes(el)[0];
       if (leaf) leaf.textContent = el.dataset.pbtLeafOrig;
       delete el.dataset.pbtLeafOrig;
     } else {
@@ -2410,13 +2428,8 @@
     el.dataset.pbtRole = "popup";
     if (state === "pending") return true;
 
-    // 1) 优先叶文本 / 标签 span：保留 svg/img 等 chrome
-    const leaf = findPrimaryTextNode(el);
-    if (leaf) {
-      if (el.dataset.pbtLeafOrig == null) el.dataset.pbtLeafOrig = leaf.textContent;
-      leaf.textContent = translatedText;
-      return true;
-    }
+    // 1) 全部叶文本：保留 svg/img 等 chrome，勿只换最长节点
+    if (swapHostTexts(el, translatedText)) return true;
     // 2) 纯文本叶：整替
     if (canSafelyReplaceText(el)) {
       el.textContent = translatedText;
