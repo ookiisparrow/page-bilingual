@@ -155,7 +155,7 @@ assert(/pbt\.properNouns\.v1|PN_STORE_KEY/.test(content), "content uses durable 
 assert(/carriesTargetScript/.test(content), "content keeps Han gate beside PN strip");
 
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
-assert(manifest.version === "1.4.51", "version bumped for names/brands");
+assert(manifest.version === "1.4.53", "version bumped for collector sibling gaps");
 
 if (failed) {
   console.error(`\n${failed} failure(s)`);

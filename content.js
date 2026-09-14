@@ -41,6 +41,10 @@
   const PBT_HOT_WORKERS_CURSOR = 2;
   const PBT_COLD_WORKERS_CURSOR = 1;
   const PBT_MERGE_CHARS = 120;
+  // 长页尾部（omarchy 新闻区在 y≈10500）曾被 220 的散叶上限直接截断
+  const PBT_LOOSE_CAP = 600;
+  const PBT_SIBLING_CAP = 120;
+  const PBT_MISS_CAP = 120;
   const PBT_MISS_SWEEP_MS = 1000; // 800–1200：降 thrash
 
   const cache = new Map();
@@ -346,10 +350,47 @@
     missSweepTimer = 0;
   }
 
-  /** 漏译扫描：replace 用整页 collect 重扫 fail/未收块；双语仍扫增量。 */
+  /** 同列表内是否已有兄弟译成功 —— 证明这类词条本来就可译 */
+  function listPeerTranslated(el) {
+    let item = el;
+    for (let i = 0; i < 4 && item && item.parentElement; i++, item = item.parentElement) {
+      const p = item.parentElement;
+      if (!p || p.children.length < 2) continue;
+      for (const c of p.children) {
+        if (c === item) continue;
+        if (c.dataset?.pbtState === "ok") return true;
+        if (c.querySelector?.('[data-pbt-state="ok"]')) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * same-lang 回声会把词条永久钉成 skip：邻项是中文、自己还是英文，
+   * 正是用户看到的「Getting Started / Terminal 花色不齐」。给一次重试即封顶。
+   */
+  function reclaimSameLangSiblings(root) {
+    const out = [];
+    for (const el of root.querySelectorAll('[data-pbt-state="skip"]')) {
+      if (el.dataset.pbtSkipReason !== "same-lang") continue;
+      if (el.dataset.pbtRetried === "1") continue;
+      if (!listPeerTranslated(el)) continue;
+      const text = textOf(el);
+      if (!text || !needsTranslate(text) || !isEffectivelyVisible(el)) continue;
+      el.dataset.pbtRetried = "1";
+      el.classList.remove("pbt-skip");
+      delete el.dataset.pbtSkipReason;
+      delete el.dataset.pbtState;
+      out.push({ el, text });
+    }
+    return out;
+  }
+
+  /** 漏译扫描：replace 用整页 collect 重扫 fail/未收块；宽扫补 loose + same-lang 兄弟 */
   function collectMissedVisible() {
     const root = document.body;
     if (!root) return [];
+    const wide = isReplaceMode() || isReplaceFull() || settings.serviceOn;
     const raw = isReplaceMode() ? collect("full") : collectNewBlocks(root);
     const all = raw.filter((b) => {
       if (!b?.el || b.el.classList?.contains("pbt-skip")) return false;
@@ -360,11 +401,17 @@
       if (b.el.classList.contains("pbt-host") || b.el.classList.contains("pbt-text-swap")) return false;
       return true;
     });
-    const prefer =
-      isReplaceMode() || isReplaceFull() || settings.serviceOn
-        ? all
-        : all.filter((b) => inView(b.el, 0.75));
-    return prefer.slice(0, isReplaceMode() || isReplaceFull() || settings.serviceOn ? 80 : 24);
+    if (wide) {
+      const seen = new Set(all.map((b) => b.el));
+      // 首轮 collectLooseLatin 有上限，长页尾部只能靠补扫接力；same-lang 钉死项给一次重试
+      for (const b of [...collectLooseLatin(root), ...reclaimSameLangSiblings(root)]) {
+        if (!b?.el || seen.has(b.el) || isSettledPbt(b.el)) continue;
+        seen.add(b.el);
+        all.push(b);
+      }
+    }
+    const prefer = wide ? expandListSiblings(all) : all.filter((b) => inView(b.el, 0.75));
+    return prefer.slice(0, wide ? PBT_MISS_CAP : 24);
   }
 
   function scheduleMissSweep(delay) {
@@ -827,6 +874,36 @@
     return true;
   }
 
+  /**
+   * 卡片式长链接：<a><time/><span>标题</span><span>摘要</span></a>。
+   * 文案超过 isContentLink 上限时不能整块放弃，否则整张卡片留成英文
+   * （omarchy 新闻列表：前几条译了、后几条全英，即此类）。
+   */
+  function isLinkCardHost(el) {
+    if (!el || el.tagName !== "A" || !el.hasAttribute("href")) return false;
+    if (el.closest?.("button,[role='button']")) return false;
+    if (isSkip(el) || isStructure(el)) return false;
+    const text = textOf(el);
+    if (text.length <= 120 || text.length > 1200) return false;
+    return needsTranslate(text);
+  }
+
+  const CARD_LEAF_SEL = "h1,h2,h3,h4,h5,h6,p,span,div,li";
+
+  function pushLinkCardLeaves(out, seen, link) {
+    for (const el of link.querySelectorAll(CARD_LEAF_SEL)) {
+      if (seen.has(el) || isSettledPbt(el)) continue;
+      if (el.querySelector?.(CARD_LEAF_SEL)) continue; // 只收叶，勿拼整卡
+      if (isSkip(el)) continue;
+      const text = textOf(el);
+      if (text.length < 2 || text.length > 400) continue;
+      if (!worth(el, text)) continue;
+      seen.add(el);
+      el.dataset.pbtRole = "prose";
+      out.push({ el, text });
+    }
+  }
+
   /** Show more/less 常紧跟宿主；译文插在 toggle 后，避免叠字 */
   function attachAnchorFor(el) {
     let anchor = el;
@@ -944,7 +1021,9 @@
         /* allow */
       } else if (isReplaceFull() && (isHeading(el) || isProseTag(el))) {
         const t = textOf(el);
-        if (t.length >= 8 && needsTranslate(t)) {
+        // 页脚/侧栏小标题（Explore、Project）短于 8 字曾整条跳过，
+        // 结果邻近链接是中文、标题还是英文
+        if (t.length >= 4 && needsTranslate(t)) {
           /* replace：header/nav 内短散文也放行 */
         } else {
           return true;
@@ -1083,7 +1162,9 @@
     if (el.closest?.("time,relative-time,time-ago,[rel='author'],.byline,.author,.meta,.breadcrumb,.pagination,.share,.social,.tags")) return true;
     if (text.length < 48 && /^(home|next|previous|share|subscribe|sign in|log in|menu|skip to content|public|private|open|closed)$/i.test(text)) return true;
     if (text.length < 40 && /^\d{1,2}\s+\w+\s+\d{4}/.test(text)) return true;
-    if (el.tagName === "LI") {
+    // 「整条就是一个链接」的 li：双语模式当目录元信息跳过；replace/full 下这就是
+    // 手册/侧栏正文（Getting Started / Terminal…），跳了会与邻项花色不齐
+    if (el.tagName === "LI" && !isReplaceFull()) {
       const a = el.querySelector("a");
       if (a && text.length < 72 && textOf(a).length >= text.length * 0.85) return true;
     }
@@ -1704,7 +1785,8 @@
     // SERP 结果标题：要译（贴下方 stack）；芯片仍由 isChipListItem 挡
     if (isRepoFileLabel(el, text)) return false;
     // 折叠节标题：短标题+chevron 的横向 flex 不译；hero/长标题放行
-    if (isHeading(el)) {
+    // replace/full 不插兄弟节点，图标+标题行没有抢宽风险 → 该规则只在双语下生效
+    if (isHeading(el) && !isReplaceFull()) {
       const p = el.parentElement;
       if (p) {
         try {
@@ -1831,7 +1913,9 @@
       if (el.querySelector?.(BLOCKS)) continue;
       // 多子块包装器：子级各自有长文案时只译叶子，勿拼父级
       if (hasMultipleProseChildren(el)) continue;
-      if (isFragileLayout(el) || isChipListItem(el)) continue;
+      // replace 不插兄弟节点：fragile 只在双语下成立，否则 hatnote（「See also: …」）
+      // 这类窄行整条收不到，页面上只剩链接被译
+      if ((isFragileLayout(el) && !isReplaceFull()) || isChipListItem(el)) continue;
       const text = textOf(el);
       const hero = looksLikeHeroTitle(el);
       if (!needsTranslate(text) || text.length > 800) continue;
@@ -1878,6 +1962,8 @@
       } else if (isContentLink(el)) {
         el.dataset.pbtRole = "prose";
         pushBlock(out, seen, el);
+      } else if (isLinkCardHost(el)) {
+        pushLinkCardLeaves(out, seen, el);
       }
     }
     // 打开的 drawer/dialog/sheet：再扫一遍交互叶与短文（防 isSkip 漏）
@@ -1944,6 +2030,28 @@
     return false;
   }
 
+  /**
+   * 行内链接不得顶掉整段散文。<p>正文…<a>词</a>…正文</p> 若只留 a，
+   * 整句英文会原样留在页面上（omarchy「See also / 手册还包含…」即此类）。
+   */
+  function prefersWholeBlock(el, inner) {
+    const text = textOf(el);
+    // 维基长段常 1200+：上限太低会让整段退回「只译行内链接」
+    if (!text || text.length > 2000) return false;
+    // 只认真正的散文标签或块级 span/div（line-clamp 引文里的 <span class="block">）。
+    // 这里不能用 isProseTag：它会因收集期写上的 pbtRole="prose" 而对行内 span 成立，
+    // 结果 HN 的 span.subline 会把整行链接吞成一个多文本节点宿主。
+    const proseTag = /^(P|H[1-6]|LI|BLOCKQUOTE|FIGCAPTION|DT|DD)$/.test(el.tagName) || el.getAttribute?.("role") === "heading";
+    const inlineHost = (el.tagName === "SPAN" || el.tagName === "DIV") && isBlockLevelBox(el);
+    if (!proseTag && !inlineHost) return false;
+    let innerLen = 0;
+    for (const o of inner) innerLen += textOf(o).length;
+    // 标题整体译才通顺
+    if (isHeading(el)) return text.length >= 8;
+    // 子节点译完后自己还剩成句的文字 → 留父级，否则那截话永远是英文
+    return text.length >= 16 && text.length - innerLen >= 8;
+  }
+
   function isCollectBlock(el) {
     try {
       return !!el?.matches?.(BLOCKS);
@@ -1952,18 +2060,74 @@
     }
   }
 
-  /** Prefer BLOCK units (p/h/li) over descendant leaves; still drop non-block wrappers. */
+  /** 已收集集合中：含其它已收集后代的祖先一律丢掉（行内链接段落除外） */
   function pruneAncestorBlocks(blocks) {
     if (!blocks.length) return blocks;
     const els = blocks.map((b) => b.el);
-    return blocks.filter(({ el }) => {
-      for (const other of els) {
-        if (other === el) continue;
-        if (other.contains(el) && isCollectBlock(other)) return false;
-        if (el.contains(other) && !isCollectBlock(el)) return false;
+    const depth = new Map();
+    for (const el of els) {
+      let d = 0;
+      for (let n = el; n; n = n.parentElement) d += 1;
+      depth.set(el, d);
+    }
+    // 由外向内定夺：祖先先决定「留自己丢行内链接」还是「让位给叶子」
+    const drop = new Set();
+    for (const el of [...els].sort((a, b) => depth.get(a) - depth.get(b))) {
+      if (drop.has(el)) continue;
+      const inner = els.filter((o) => o !== el && !drop.has(o) && el.contains(o));
+      if (!inner.length) continue;
+      if (prefersWholeBlock(el, inner)) {
+        for (const o of inner) drop.add(o);
+      } else {
+        drop.add(el);
       }
-      return true;
-    });
+    }
+    return blocks.filter((b) => !drop.has(b.el));
+  }
+
+  function isBlockLevelBox(el) {
+    if (!el || el.nodeType !== 1) return false;
+    try {
+      const d = getComputedStyle(el).display || "";
+      return !d.startsWith("inline") && d !== "none" && d !== "contents";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 同一列表/网格里的兄弟必须一起进队。段落 1、3 译了而 2 留英文，
+   * 或侧栏 Getting Started / Terminal 与邻项花色不齐，都是这里没兜住。
+   * 只扩块级兄弟：行内 <a>/<em> 兄弟会把整段父级挤掉。
+   */
+  function expandListSiblings(blocks) {
+    if (!blocks || !blocks.length) return blocks || [];
+    const seen = new Set(blocks.map((b) => b.el));
+    const parents = new Set();
+    for (const b of blocks) {
+      const p = b.el.parentElement;
+      if (p && p.children.length > 1 && isBlockLevelBox(b.el)) parents.add(p);
+    }
+    let added = 0;
+    for (const p of parents) {
+      if (added >= PBT_SIBLING_CAP) break;
+      for (const el of p.children) {
+        if (added >= PBT_SIBLING_CAP) break;
+        if (el.nodeType !== 1 || seen.has(el) || isSettledPbt(el)) continue;
+        if (!isBlockLevelBox(el)) continue;
+        if (isSkip(el) || isStructure(el)) continue;
+        if (el.querySelector?.(BLOCKS)) continue;
+        // 已有后代被收：留给叶子，别拼父级
+        if ([...seen].some((s) => el.contains(s))) continue;
+        const text = textOf(el);
+        if (text.length > 800 || !worth(el, text)) continue;
+        seen.add(el);
+        if (!el.dataset.pbtRole) el.dataset.pbtRole = "prose";
+        blocks.push({ el, text });
+        added += 1;
+      }
+    }
+    return added ? pruneAncestorBlocks(blocks) : blocks;
   }
 
   function collect(scope) {
@@ -1986,8 +2150,8 @@
     } else if (!out.length) {
       out = collectLooseLatin(document.body);
     }
-    // 收尾统一否决站点行 chrome：散叶/合并父级等旁路不过 worth()，只有这里挡得住（A5）
-    return out.filter((b) => !isRowChromeText(b.el, b.text));
+    // 兄弟齐队后再否决行 chrome：散叶/合并父级等旁路不过 worth()，只有这里挡得住（A5）
+    return expandListSiblings(out).filter((b) => !isRowChromeText(b.el, b.text));
   }
 
   /** 是否「结构安全」：仅极小纯文本叶可 textContent；hero/大标题/有结构一律否 */
@@ -2013,7 +2177,7 @@
     const out = [];
     const seen = new Set();
     const roots = [root, ...openShadowRoots(root, 1)];
-    const cap = isReplaceFull() ? 220 : 64;
+    const cap = isReplaceFull() ? PBT_LOOSE_CAP : 64;
     for (const scanRoot of roots) {
       if (!scanRoot) continue;
       // 交互叶优先补收
@@ -2028,13 +2192,16 @@
       }
       for (const el of scanRoot.querySelectorAll("h1,h2,h3,h4,p,span,label,li,div")) {
         if (out.length >= cap) break;
-        if (seen.has(el)) continue;
+        if (seen.has(el) || isSettledPbt(el)) continue;
         if (isSkip(el) || el.closest?.(SKIP_HARD)) continue;
         // replace：不因嵌在 nav/footer 丢叶子；仍跳过表单控件
         if (el.closest?.("input,textarea,select")) continue;
         if (!isReplaceFull() && el.closest?.("button,[role='button'],nav,footer")) continue;
         const hero = looksLikeHeroTitle(el) || isHeading(el);
-        const heavy = [...el.children].filter((c) => !/^(BR|WBR|SVG|IMG|SPAN)$/.test(c.tagName));
+        // 行内排版元素（a/em/strong/code…）不算「结构」：否则含链接的句子整句收不到
+        const heavy = [...el.children].filter(
+          (c) => !/^(BR|WBR|SVG|IMG|SPAN|A|EM|STRONG|B|I|U|SMALL|MARK|ABBR|SUP|SUB|CODE)$/.test(c.tagName)
+        );
         if (!hero && heavy.length) continue;
         if (!hero && el.querySelector?.("div,p,h1,h2,h3,ul,ol,section,article")) continue;
         const text = textOf(el);
@@ -2048,9 +2215,16 @@
           if (!hero && r.height > 160) continue;
           if (hero && r.height > 280) continue;
         } catch { /* ignore */ }
+        // 祖先是链接/按钮叶时不再重复收；普通 span/div 祖先则父子都收，
+        // 交给 pruneAncestorBlocks 定夺 —— 否则父级一旦被丢，子级也随之漏掉
+        // （HN 的 span.subline 会带走里面的 span.score）
         let anc = false;
         for (const s of seen) {
-          if (s.contains?.(el)) { anc = true; break; }
+          if (!s.contains?.(el)) continue;
+          if (/^(A|BUTTON|LABEL)$/.test(s.tagName) || s.getAttribute?.("role") === "button") {
+            anc = true;
+            break;
+          }
         }
         if (anc) continue;
         seen.add(el);
@@ -3042,7 +3216,8 @@
         clearAttached(el);
       }
     }
-    // 脆弱宿主：双语禁止 append；replace 仍换字（芯片除外）
+    // 脆弱宿主：双语禁止 append；replace 仍换字（芯片除外）。
+    // replace 下 syncModeFor 同步换字并移除 .pbt-tr，没有兄弟节点抢宽。
     if (
       !isReplaceMode() &&
       !isPopupSurface(el) &&
