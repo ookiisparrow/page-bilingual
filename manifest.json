@@ -45,9 +45,6 @@
         "shared.js",
         "content.js"
       ],
-      "css": [
-        "content.css"
-      ],
       "run_at": "document_end",
       "all_frames": false
     }
@@ -57,25 +54,13 @@
       "suggested_key": {
         "default": "Alt+A"
       },
-      "description": "浮钮可拖缩小。翻译 / 恢复原文"
+      "description": "翻译 / 恢复原文"
     },
     "translate-full-page": {
       "suggested_key": {
         "default": "Alt+W"
       },
-      "description": "浮钮可拖缩小。翻译整页"
-    },
-    "translate-hovered": {
-      "suggested_key": {
-        "default": "Alt+S"
-      },
-      "description": "浮钮可拖缩小。翻译指针下的段落"
-    },
-    "translate-input": {
-      "suggested_key": {
-        "default": "Alt+I"
-      },
-      "description": "浮钮可拖缩小。翻译当前输入框"
+      "description": "翻译整页"
     }
   },
   "version_name": "grok bot构筑版"

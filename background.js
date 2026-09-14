@@ -1,7 +1,7 @@
 importScripts("shared.js");
 try { importScripts("local-key.js"); } catch (e) { /* phone packs omit this */ }
 
-const MENU = { page: "pbt-translate-page", restore: "pbt-show-original", selection: "pbt-translate-selection" };
+const MENU = { page: "pbt-translate-page", restore: "pbt-show-original" };
 let activeRoute = "deepseek";
 
 function syncServiceBadge(on) {
@@ -31,7 +31,6 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({ id: MENU.page, title: "翻译本页", contexts: ["page"] });
     chrome.contextMenus.create({ id: MENU.restore, title: "显示原文", contexts: ["page"] });
-    chrome.contextMenus.create({ id: MENU.selection, title: "翻译选中文字", contexts: ["selection"] });
   });
 });
 
@@ -39,27 +38,22 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (!tab?.id) return;
   if (info.menuItemId === MENU.page) send(tab.id, { type: "PBT_TRANSLATE" });
   if (info.menuItemId === MENU.restore) send(tab.id, { type: "PBT_RESTORE" });
-  if (info.menuItemId === MENU.selection) send(tab.id, { type: "PBT_SELECTION" });
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
   if (command === "toggle-translate") send(tab.id, { type: "PBT_TOGGLE" });
-  if (command === "translate-full-page") send(tab.id, { type: "PBT_TRANSLATE", scope: "full" });
-  if (command === "translate-hovered") send(tab.id, { type: "PBT_HOVER" });
-  if (command === "translate-input") send(tab.id, { type: "PBT_INPUT" });
+  if (command === "translate-full-page") send(tab.id, { type: "PBT_TRANSLATE" });
 });
 
 function send(tabId, payload) {
-  chrome.tabs.sendMessage(tabId, payload).catch(() => {
-    Promise.all([
-      chrome.scripting.insertCSS({ target: { tabId }, files: ["content.css"] }),
-      chrome.scripting.executeScript({ target: { tabId }, files: ["shared.js", "content.js"] }),
-    ])
+  chrome.tabs.sendMessage(tabId, payload).catch(() =>
+    chrome.scripting
+      .executeScript({ target: { tabId }, files: ["shared.js", "content.js"] })
       .then(() => chrome.tabs.sendMessage(tabId, payload))
-      .catch(() => {});
-  });
+      .catch(() => {})
+  );
 }
 
 const isCursorEngine = (engine) => /^(bridge|cursor)$/i.test(String(engine || ""));
@@ -109,7 +103,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     PBT_BATCH: async () => {
       const items = msg.items || [];
       try {
-        return { ok: true, items: await translateBatch(items, msg.targetLang, msg.glossary || [], msg.page || {}, msg.properNouns || []), route: activeRoute };
+        return { ok: true, items: await translateBatch(items, msg.targetLang, msg.page || {}, msg.properNouns || []), route: activeRoute };
       } catch (err) {
         const message = String(err.message || err);
         await appendErrorLog({ message, source: "PBT_BATCH", engine: activeRoute, host: msg.page?.host, itemCount: items.length, status: err.status });
@@ -152,7 +146,7 @@ function extractJsonArray(text) {
 
 const rowText = (r) => (r == null ? "" : String(r.text ?? r.translatedText ?? r.translation ?? r.targetText ?? ""));
 
-function buildPrompt(targetLang, items, glossary, page, properNouns) {
+function buildPrompt(targetLang, items, page, properNouns) {
   const zh = /^zh\b/i.test(targetLang);
   const where = [page?.host, page?.title].filter(Boolean).join(" — ");
   return (
@@ -162,7 +156,6 @@ function buildPrompt(targetLang, items, glossary, page, properNouns) {
     "文本中的 <b1>…</b1>、<b2>…</b2> 是行内格式标记：必须原样保留，成对出现，数量与嵌套不变，不可增删；标记内的文字照常翻译。\n" +
     `只输出 JSON 数组：[{"id":"...","text":"译文"}]。id/顺序/数量必须与输入一致。\n` +
     (where ? `页面: ${where}\n` : "") +
-    (glossary.length ? "固定术语（优先）:\n" + glossary.map((g) => `- ${g.src} => ${g.dst}`).join("\n") + "\n" : "") +
     (properNouns.length ? "专有名词白名单（原样保留，勿翻译、勿音译）:\n" + properNouns.slice(0, 80).map((t) => `- ${t}`).join("\n") + "\n" : "") +
     `Items: ${JSON.stringify(items.map((x) => ({ id: String(x.id), text: String(x.text ?? "") })))}`
   );
@@ -179,7 +172,7 @@ function align(items, raw) {
 }
 
 /** One OpenAI-compatible chat-completions call (DeepSeek or Cursor bridge). */
-async function chatCompletions(s, items, glossary, page, cfg) {
+async function chatCompletions(s, items, page, cfg) {
   const apiKey = String(cfg.apiKey || "").trim();
   if (cfg.requireKey && !apiKey) throw new Error(`未填写 ${cfg.label} API Key，请到选项页设置。`);
   const messages = [
@@ -188,7 +181,7 @@ async function chatCompletions(s, items, glossary, page, cfg) {
       content:
         "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。人名与品牌名一律原样保留。<bN>…</bN> 标记原样保留。",
     },
-    { role: "user", content: buildPrompt(s.targetLang, items, glossary, page, s.properNouns) },
+    { role: "user", content: buildPrompt(s.targetLang, items, page, s.properNouns) },
   ];
   const call = async (body) => {
     const headers = { "Content-Type": "application/json" };
@@ -214,25 +207,17 @@ async function chatCompletions(s, items, glossary, page, cfg) {
   return align(items, extractJsonArray(text));
 }
 
-/** Retry once with backoff; on a second failure halve the batch (recursion bottoms out at 1 item). */
-async function translateHttp(s, items, glossary, page, cfg) {
-  if (!items.length) return [];
-  let lastErr;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      if (attempt) await new Promise((r) => setTimeout(r, 600));
-      return await chatCompletions(s, items, glossary, page, cfg);
-    } catch (err) {
-      lastErr = err;
-    }
+/** One retry after a short backoff, then give up (content keeps the source and logs the error). */
+async function translateHttp(s, items, page, cfg) {
+  try {
+    return await chatCompletions(s, items, page, cfg);
+  } catch (err) {
+    await new Promise((r) => setTimeout(r, 600));
+    return chatCompletions(s, items, page, cfg);
   }
-  if (items.length < 2) throw lastErr;
-  const mid = Math.ceil(items.length / 2);
-  const left = await translateHttp(s, items.slice(0, mid), glossary, page, cfg);
-  return left.concat(await translateHttp(s, items.slice(mid), glossary, page, cfg));
 }
 
-async function translateBatch(items, targetLang, glossary, page, properNouns) {
+async function translateBatch(items, targetLang, page, properNouns) {
   if (!items.length) return [];
   const s = await PBT.loadAll();
   if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string") s.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;
@@ -243,5 +228,5 @@ async function translateBatch(items, targetLang, glossary, page, properNouns) {
     activeRoute === "cursor"
       ? { url: s.cursorApiUrl || PBT.DEFAULTS.cursorApiUrl, model: s.cursorModel || PBT.DEFAULTS.cursorModel, apiKey: s.cursorApiKey || "bridge", label: "Cursor", timeoutMs: 95000 }
       : { url: s.deepseekApiUrl || PBT.DEFAULTS.deepseekApiUrl, model: s.deepseekModel || PBT.DEFAULTS.deepseekModel, apiKey: s.deepseekApiKey, label: "DeepSeek", requireKey: true, timeoutMs: 28000 };
-  return translateHttp(s, items, glossary, page, cfg);
+  return translateHttp(s, items, page, cfg);
 }
