@@ -1,22 +1,4 @@
-const KEYS = [
-  "targetLang",
-  "engine",
-  "deepseekApiUrl",
-  "deepseekModel",
-  "cursorApiUrl",
-  "cursorModel",
-  "displayMode",
-  "scope",
-  "excludeCss",
-  "hoverEnabled",
-  "hoverKey",
-  "selectionEnabled",
-  "inputEnabled",
-  "inputGesture",
-  "trSize",
-  "trColor",
-  "trOpacity",
-];
+const KEYS = ["targetLang", "engine", "deepseekApiUrl", "deepseekModel", "cursorApiUrl", "cursorModel", "excludeCss"];
 
 async function renderProperNouns() {
   const store = await PBT.pnLoad();
@@ -56,8 +38,7 @@ async function renderProperNouns() {
   for (const k of KEYS) {
     const el = document.getElementById(k);
     if (!el) continue;
-    if (el.type === "checkbox") el.checked = !!s[k];
-    else el.value = s[k] ?? "";
+    el.value = s[k] ?? "";
   }
   document.getElementById("deepseekApiKey").value = s.deepseekApiKey || "";
   await renderProperNouns();
@@ -82,7 +63,7 @@ async function renderProperNouns() {
     for (const k of KEYS) {
       const el = document.getElementById(k);
       if (!el) continue;
-      patch[k] = el.type === "checkbox" ? el.checked : el.value.trim();
+      patch[k] = el.value.trim();
     }
     patch.deepseekApiKey = document.getElementById("deepseekApiKey").value.trim();
     await PBT.save(patch);

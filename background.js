@@ -18,13 +18,12 @@ chrome.storage.onChanged.addListener((chg, area) => {
 chrome.storage.local.get(["serviceOn"], (s) => syncServiceBadge(!!s.serviceOn));
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get(["serviceOn", "engine", "deepseekModel", "displayMode", "deepseekApiKey"], (s) => {
+  chrome.storage.local.get(["serviceOn", "engine", "deepseekModel", "deepseekApiKey"], (s) => {
     syncServiceBadge(!!s.serviceOn);
     const patch = {};
     // Keep cursor / bridge; only coerce unset / legacy glm / auto → deepseek
     if (!s.engine || s.engine === "glm" || s.engine === "auto") patch.engine = "deepseek";
     if (!s.deepseekModel || s.deepseekModel === "deepseek-chat") patch.deepseekModel = "deepseek-flash";
-    if (!s.displayMode || s.displayMode === "translation" || s.displayMode === "bilingual") patch.displayMode = "replace";
     if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string" && PBT_LOCAL_DEEPSEEK_KEY) patch.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;
     if (Object.keys(patch).length) chrome.storage.local.set(patch);
   });

@@ -80,20 +80,6 @@
       <input id="cursorModel" type="text" placeholder="composer-2.5-fast" />
       <p class="hint">视觉核验 / 桌面门禁走 Cursor bridge；需先启动 <code>bridge/server.mjs</code>。</p>
 
-      <label>默认显示</label>
-      <select id="displayMode">
-        <option value="replace">整页替换（推荐·浮钮唯一模式）</option>
-        <option value="bilingual">双语（原文 + 译文）</option>
-        <option value="translation">仅译文（隐藏原文）</option>
-      </select>
-      <p class="hint">页内浮钮固定走「整页替换」。此处仅影响高级/旧路径；推荐保持「整页替换」。</p>
-
-      <label>默认范围</label>
-      <select id="scope">
-        <option value="full">整页</option>
-        <option value="main">正文</option>
-      </select>
-
       <label for="excludeCss">额外跳过选择器</label>
       <input id="excludeCss" type="text" placeholder=".my-widget, #promo" />
 
@@ -107,37 +93,6 @@
         <button id="pnAddBtn" type="button" style="margin-top:0">添加</button>
       </div>
       <p class="hint" id="pnCount"></p>
-
-      <label class="check"><input type="checkbox" id="hoverEnabled" /> 悬停气泡（需按修饰键）</label>
-      <label for="hoverKey">悬停修饰键</label>
-      <select id="hoverKey">
-        <option value="Alt">Alt</option>
-        <option value="Shift">Shift</option>
-        <option value="Control">Control / ⌘</option>
-      </select>
-      <label class="check"><input type="checkbox" id="selectionEnabled" /> 划词卡片</label>
-      <label class="check"><input type="checkbox" id="inputEnabled" /> 输入框翻译</label>
-      <label for="inputGesture">输入框手势</label>
-      <select id="inputGesture">
-        <option value="triple-space">连按三下空格</option>
-        <option value="shortcut">仅快捷键</option>
-      </select>
-
-      <label>译文样式</label>
-      <div class="row">
-        <div>
-          <label for="trSize">字号</label>
-          <input id="trSize" type="text" placeholder="0.95em" />
-        </div>
-        <div>
-          <label for="trColor">颜色</label>
-          <input id="trColor" type="text" placeholder="#3f4a5a" />
-        </div>
-        <div>
-          <label for="trOpacity">透明度</label>
-          <input id="trOpacity" type="text" placeholder="1" />
-        </div>
-      </div>
       </details>
 
       <button id="save" type="button">保存</button>
