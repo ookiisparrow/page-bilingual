@@ -93,7 +93,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     return true;
   }
   if (msg?.type !== "PBT_BATCH") return;
-  translateBatch(msg.items || [], msg.targetLang, msg.glossary || [], msg.page || {})
+  translateBatch(msg.items || [], msg.targetLang, msg.glossary || [], msg.page || {}, msg.properNouns || [])
     .then((items) => reply({ ok: true, items, route: activeRoute }))
     .catch((err) => reply({ ok: false, error: String(err.message || err) }));
   return true;
@@ -152,11 +152,23 @@ function rowText(r) {
 }
 
 
-function buildPrompt(targetLang, items, glossary, page) {
+function buildPrompt(targetLang, items, glossary, page, properNouns) {
   const gloss =
     !glossary?.length
       ? ""
       : "固定术语（优先）:\n" + glossary.map((g) => `- ${g.src} => ${g.dst}`).join("\n") + "\n";
+  const pnList = Array.isArray(properNouns)
+    ? properNouns.map((t) => String(t || "").trim()).filter(Boolean)
+    : [];
+  const pn =
+    !pnList.length
+      ? ""
+      : "专有名词白名单（原样保留，勿翻译、勿音译）:\n" +
+        pnList
+          .slice(0, 80)
+          .map((t) => `- ${t}`)
+          .join("\n") +
+        "\n";
   const where = [page?.host, page?.title].filter(Boolean).join(" — ") || "";
   const zh = /^zh\b/i.test(targetLang);
   return (
@@ -164,10 +176,11 @@ function buildPrompt(targetLang, items, glossary, page) {
     (zh
       ? "译文必须是中文，禁止原样返回英文，禁止中英混抄整句。\n"
       : `Output language must be ${targetLang}, not the source language.\n`) +
-    "专有名词、代码、数字可保留。\n" +
+    "专有名词、代码、数字可保留。白名单中的词必须原样保留。\n" +
     `只输出 JSON 数组：[{"id":"...","text":"译文"}]。id/顺序/数量必须与输入一致。\n` +
     (where ? `页面: ${where}\n` : "") +
     gloss +
+    pn +
     `Items: ${JSON.stringify(items.map((x) => ({ id: String(x.id), text: String(x.text ?? "") })))}`
   );
 }
@@ -223,7 +236,7 @@ async function chatCompletionsOnce(s, items, glossary, page, cfg) {
       content:
         "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。",
     },
-    { role: "user", content: buildPrompt(s.targetLang, items, glossary, page) },
+    { role: "user", content: buildPrompt(s.targetLang, items, glossary, page, s.properNouns) },
   ];
   async function call(body) {
     const headers = { "Content-Type": "application/json" };
@@ -337,10 +350,11 @@ async function translateHttp(s, items, glossary, page, depth, onceFn, failLabel)
   throw lastErr || new Error(failLabel || "翻译失败");
 }
 
-async function translateBatch(items, targetLang, glossary, page) {
+async function translateBatch(items, targetLang, glossary, page, properNouns) {
   const s = await PBT.loadAll();
   if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string") s.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;
   s.targetLang = targetLang || s.targetLang;
+  s.properNouns = Array.isArray(properNouns) ? properNouns : [];
   if (!items.length) return [];
 
   const engine = normalizeEngine(s.engine);
