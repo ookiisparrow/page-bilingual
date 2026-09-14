@@ -1,4 +1,4 @@
-# Interactive coverage (1.4.45)
+# Interactive coverage (1.4.46)
 
 What `collect` / `collectNewBlocks` / miss-sweep pick up for **buttons, links, labels, drawers**.
 
@@ -14,7 +14,7 @@ What `collect` / `collectNewBlocks` / miss-sweep pick up for **buttons, links, l
 | Drawer / dialog / sheet | `POPUP` set (see below) | on open → `scheduleTranslatePanel` + panel re-sweep |
 | Loose leaves | `collectLooseLatin` always merged on replace/full | span/div/button/label cap 220 |
 
-## Replace-mode relaxations (1.4.45)
+## Replace-mode relaxations (1.4.46)
 
 - `worth`: skip fragile/tightClip gates (keep chip + extreme ellipsis)
 - `collect`: always merge `collectLooseLatin` even when some BLOCKS exist

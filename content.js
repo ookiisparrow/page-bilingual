@@ -2775,7 +2775,7 @@
       markQueued(b.el);
       return { id: ensureId(b.el), text: b.text, el: b.el };
     });
-    await runQueue(items, { size: PBT_BATCH, workers: 1, my });
+    await runQueue(items, { size: queueBatchSize(), workers: coldWorkerCount(), my, atomicReplace: true });
     if (my === runId) {
       translating = false;
       renderFab();
@@ -2784,6 +2784,8 @@
 
   function restoreAll() {
     runId += 1;
+    allowMissSweep = false;
+    hotFirstPaintDone = false;
     unwatchDynamicMenus();
     if (stopScrollWatch) {
       stopScrollWatch();
@@ -2911,6 +2913,17 @@
     el.classList.add("pbt-queued");
   }
 
+  /** replace 抗斑驳：占位排队，不换字、不插 … */
+  function markPending(el) {
+    if (!el) return;
+    el.dataset.pbtState = "pending";
+    el.classList.add("pbt-queued");
+  }
+
+  function rAF() {
+    return new Promise((r) => requestAnimationFrame(() => r()));
+  }
+
   function failBack(el, reason) {
     clearAttached(el);
     restoreTextSwap(el);
@@ -2983,13 +2996,14 @@
     }
   }
 
-  async function runQueue(items, { size = 5, workers = 1, my }) {
+  async function runQueue(items, { size = 5, workers = 1, my, atomicReplace = false }) {
     if (!items.length) return { done: 0, failed: 0, lastError: "" };
     const byId = new Map(items.map((x) => [String(x.id), x]));
     let cursor = 0;
     let done = 0;
     let failed = 0;
     let lastBatchError = "";
+    const doAtomic = atomicReplace && settings.displayMode === "replace";
 
     async function applyRows(rows) {
       const got = new Set();
@@ -3068,16 +3082,35 @@
       return st === "ok" || st === "skip" || st === "fail";
     }
 
+    async function paintRows(rows) {
+      if (doAtomic) {
+        await rAF();
+        const got = await applyRows(rows);
+        if (!hotFirstPaintDone && settings.displayMode === "replace") {
+          hotFirstPaintDone = true;
+          allowMissSweep = true;
+        }
+        return got;
+      }
+      return await applyRows(rows);
+    }
+
     async function worker() {
       while (cursor < items.length && my === runId && translating) {
         const start = cursor;
         cursor += size;
         const batch = items.slice(start, start + size);
         if (!batch.length) break;
+        // replace：请求前只标 pending，不换字 → 整批返回后一帧上屏，抗斑驳
+        if (doAtomic) {
+          for (const it of batch) {
+            if (it.el?.isConnected) markPending(it.el);
+          }
+        }
         try {
           let rows = await requestBatchRetry(batch);
           if (my !== runId) return;
-          let got = await applyRows(rows);
+          let got = await paintRows(rows);
           // 顺序兜底：返回条数对齐时按位贴 id（provider 已 align；这里防漏网）
           if (Array.isArray(rows) && rows.length === batch.length) {
             const zip = [];
@@ -3087,14 +3120,14 @@
               const t = rows[i]?.text;
               if (t) zip.push({ id: it.id, text: t });
             }
-            if (zip.length) got = new Set([...got, ...(await applyRows(zip))]);
+            if (zip.length) got = new Set([...got, ...(await paintRows(zip))]);
           }
           // 缺 id：单独再打一轮，避免整批误杀
           const miss = batch.filter((it) => !got.has(String(it.id)) && !got.has(it.id) && !settled(it));
           if (miss.length) {
             await sleep(220);
             rows = await requestBatchRetry(miss).catch(() => []);
-            got = new Set([...got, ...(await applyRows(rows))]);
+            got = new Set([...got, ...(await paintRows(rows))]);
           }
           for (const it of batch) {
             if (settled(it)) continue;
@@ -3117,7 +3150,7 @@
             try {
               await sleep(180);
               const rows = await requestBatch([it]);
-              await applyRows(rows);
+              await paintRows(rows);
               if (!settled(it)) {
                 failBack(it.el, "item-retry:" + String(err?.message || err).slice(0, 40));
                 failed += 1;
@@ -3128,7 +3161,7 @@
             }
           }
         }
-        await sleep(120);
+        await sleep(doAtomic ? 60 : 120);
         if (my === runId) {
           const ok = countOk();
           toast(`翻译中 ${ok} 段${failed ? ` · 失败 ${failed}` : ""}…`, failed > 0, true);
@@ -3161,7 +3194,7 @@
         pending.sort((a, b) => Number(inView(b.el, 0.75)) - Number(inView(a.el, 0.75)) || nearScore(a.el) - nearScore(b.el));
         const hotNow = pending.filter((it) => inView(it.el, 0.75));
         const batch = (hotNow.length ? hotNow : pending).slice(0, PBT_COLD_SLICE);
-        await runQueue(batch, { size: PBT_BATCH, workers: 1, my });
+        await runQueue(batch, { size: queueBatchSize(), workers: coldWorkerCount(), my, atomicReplace: true });
         // 去掉已完成
         coldItems = coldItems.filter((it) => it.el.isConnected && it.el.dataset.pbtState !== "ok" && it.el.dataset.pbtState !== "skip" && it.el.dataset.pbtState !== "fail");
         if (!hotNow.length) {
@@ -3181,7 +3214,7 @@
       scrollTimer = setTimeout(() => {
         if (translating && my === runId) pumpCold(my).catch(() => {});
         // 滚动停稳后扫漏译（翻译中或已译完均可）
-        if ((translated || translating) && my === runId) scheduleMissSweep(280);
+        if ((translated || translating) && my === runId) scheduleMissSweep(PBT_MISS_SWEEP_MS);
       }, 160);
     };
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
@@ -3226,6 +3259,8 @@
     // 推迟 translated=true 到首段 ok；translating 驱动队列
     translating = true;
     translated = false;
+    allowMissSweep = false;
+    hotFirstPaintDone = false;
     watchDynamicMenus();
     renderFab();
 
@@ -3325,8 +3360,11 @@
       }
     }, 2000);
 
-    // 热队列：小批低并发，立刻上屏（热完再挂滚动，避免双 runQueue 并发误杀）
-    await runQueue(hot, { size: PBT_BATCH, workers: 2, my });
+    // 热队列：DeepSeek 大批+3 worker；replace 整批 rAF 原子上屏（抗斑驳）
+    // 热完再挂滚动 / miss-sweep，避免冷扫与热区抢额度
+    await runQueue(hot, { size: queueBatchSize(), workers: hotWorkerCount(), my, atomicReplace: true });
+    allowMissSweep = true;
+    hotFirstPaintDone = true;
     if (hotWatch) {
       clearInterval(hotWatch);
       hotWatch = 0;
@@ -3338,7 +3376,7 @@
 
     stopScrollWatch = watchScrollTranslate(my);
 
-    // 冷队列继续，滚动可插队
+    // 冷队列继续，滚动可插队（仍优先视口）
     await pumpCold(my);
     if (my !== runId) {
       translating = false;
@@ -3346,18 +3384,18 @@
     }
     // 扫尾：剩余冷段
     const rest = coldItems.filter((it) => it.el.isConnected && it.el.dataset.pbtState !== "ok" && it.el.dataset.pbtState !== "fail" && it.el.dataset.pbtState !== "skip");
-    if (rest.length) await runQueue(rest, { size: PBT_BATCH, workers: 1, my });
+    if (rest.length) await runQueue(rest, { size: queueBatchSize(), workers: coldWorkerCount(), my, atomicReplace: true });
 
     if (my !== runId) {
       translating = false;
       return { ok: true, translated: false, aborted: true };
     }
     sweepLeftovers();
-    scheduleMissSweep(350);
-    // serviceOn：再扫几轮全页漏译
+    scheduleMissSweep(PBT_MISS_SWEEP_MS);
+    // serviceOn：再扫几轮全页漏译（拉长间隔）
     if (settings.serviceOn || isReplaceFull()) {
-      setTimeout(() => scheduleMissSweep(900), 900);
-      setTimeout(() => scheduleMissSweep(1800), 1800);
+      setTimeout(() => scheduleMissSweep(PBT_MISS_SWEEP_MS + 200), PBT_MISS_SWEEP_MS + 200);
+      setTimeout(() => scheduleMissSweep(PBT_MISS_SWEEP_MS * 2), PBT_MISS_SWEEP_MS * 2);
     }
     const done = countOk();
     const skipped = items.filter((it) => it.el.dataset.pbtState === "skip").length;
@@ -3967,7 +4005,7 @@
         if (settings.serviceOn && (!r || r.ok === false || r.error === "empty") && att < 5) {
           softAutoTranslate(reason === "dom" ? "dom-empty" : reason, att + 1);
         } else if (settings.serviceOn) {
-          scheduleMissSweep(400);
+          scheduleMissSweep(PBT_MISS_SWEEP_MS);
         }
       } catch {
         if (att < 5) softAutoTranslate(reason, att + 1);
@@ -3997,13 +4035,13 @@
         if (!settings.serviceOn) return;
         if (translating) {
           scheduleTranslateNew();
-          scheduleMissSweep(500);
+          scheduleMissSweep(PBT_MISS_SWEEP_MS);
           return;
         }
         if (!translated) softAutoTranslate("dom");
         else {
           scheduleTranslateNew();
-          scheduleMissSweep(400);
+          scheduleMissSweep(PBT_MISS_SWEEP_MS);
         }
       }, 480);
     });
