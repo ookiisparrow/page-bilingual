@@ -18,6 +18,32 @@ const KEYS = [
   "trOpacity",
 ];
 
+async function renderProperNouns() {
+  const store = await PBT.pnLoad();
+  const list = document.getElementById("pnList");
+  const count = document.getElementById("pnCount");
+  if (!list) return;
+  list.innerHTML = "";
+  const terms = PBT.pnTermList(store);
+  for (const term of terms) {
+    const key = PBT.pnNormKey(term);
+    const pinned = !!store.terms[key]?.pinned;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.textContent = pinned ? `${term} ×` : `${term} ×`;
+    chip.title = pinned ? "用户固定 · 点击删除" : "点击删除";
+    chip.style.cssText =
+      "border:1px solid #d1d5db;background:#fff;border-radius:999px;padding:2px 8px;font:12px/1.4 ui-sans-serif,system-ui,sans-serif;cursor:pointer";
+    if (pinned) chip.style.borderColor = "#111";
+    chip.onclick = async () => {
+      await PBT.pnRemove(term);
+      renderProperNouns();
+    };
+    list.appendChild(chip);
+  }
+  if (count) count.textContent = `共 ${terms.length} / ${PBT.PN_CAP}（超出时优先淘汰未固定的旧词）`;
+}
+
 (async () => {
   const s = await PBT.loadAll();
   const lang = document.getElementById("targetLang");
@@ -34,6 +60,22 @@ const KEYS = [
     else el.value = s[k] ?? "";
   }
   document.getElementById("deepseekApiKey").value = s.deepseekApiKey || "";
+  await renderProperNouns();
+
+  document.getElementById("pnAddBtn")?.addEventListener("click", async () => {
+    const input = document.getElementById("pnAdd");
+    const term = input?.value || "";
+    const next = await PBT.pnAdd(term, { pinned: true });
+    if (!next) return;
+    if (input) input.value = "";
+    renderProperNouns();
+  });
+  document.getElementById("pnAdd")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      document.getElementById("pnAddBtn")?.click();
+    }
+  });
 
   document.getElementById("save").onclick = async () => {
     const patch = {};
