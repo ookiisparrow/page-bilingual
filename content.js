@@ -511,12 +511,16 @@
     }
   }
 
-  /** Glossary rows for the API: page pins + identity rows for whitelist terms present in the batch. */
+  /**
+   * Glossary rows for the API: page pins + identity rows for whitelist brands
+   * and heuristic person names present in the batch (keep as-is).
+   */
   function glossaryWithProperNouns(batchTexts) {
     const out = glossary.map((g) => ({ src: g.src, dst: g.dst }));
     const seen = new Set(out.map((g) => PBT.pnNormKey(g.src)));
     const blob = (batchTexts || []).join("\n");
-    for (const term of properNounList) {
+    const preserve = PBT.pnMergeBatchPreserve(batchTexts, properNounList);
+    for (const term of preserve) {
       const key = PBT.pnNormKey(term);
       if (!key || seen.has(key)) continue;
       const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -526,6 +530,15 @@
       seen.add(key);
     }
     return out;
+  }
+
+  /** Whitelist + heuristic person names for one src/dst pair (echo / restore). */
+  function preserveTermsForPair(src, dst) {
+    return PBT.pnUniqueTerms([
+      properNounList,
+      PBT.pnDetectPersonNames(src),
+      PBT.pnDetectPersonNames(dst),
+    ]);
   }
 
   /* Global segment cache — LFU-lite (one-hit probation + light aging).
@@ -1176,13 +1189,15 @@
   /**
    * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
    * true → 应 skip attach（markSkip same-lang）。
-   * 白名单专名（Windows / Omarchy 等）不计入拉丁词集；与 Han 目标脚本门（PR #4）互补。
+   * 白名单品牌 / 启发式人名不计入拉丁词集；与 Han 目标脚本门（PR #4）互补，
+   * 避免「中文 + Tim Cook / Nike」被当成回声丢掉。
    */
   function nearEchoOverlap(src, dst) {
-    // 保留 Omarchy / Windows 等专名的中译，词集覆盖率会误判成回声 → 先放行
+    // 保留 Omarchy / Windows / 人名品牌的中译，词集覆盖率会误判成回声 → 先放行
     if (carriesTargetScript(src, dst)) return false;
-    const s0 = PBT.pnStripForEcho(src, properNounList);
-    const d0 = PBT.pnStripForEcho(dst, properNounList);
+    const keep = preserveTermsForPair(src, dst);
+    const s0 = PBT.pnStripForEcho(src, keep);
+    const d0 = PBT.pnStripForEcho(dst, keep);
     const s = String(s0 || "").trim().toLowerCase();
     const d = String(d0 || "").trim().toLowerCase();
     if (!s || !d) return false;
@@ -3364,13 +3379,15 @@
       if (touchProperNounsInText(it.text)) touchedPn = true;
     }
     if (touchedPn) persistProperNounsSoon();
-    const gloss = glossaryWithProperNouns(need.map((x) => x.text));
+    const batchTexts = need.map((x) => x.text);
+    const gloss = glossaryWithProperNouns(batchTexts);
+    const preserve = PBT.pnMergeBatchPreserve(batchTexts, properNounList);
     const res = await runtimeSend({
       type: "PBT_BATCH",
       items: need.map(({ id, text }) => ({ id, text })),
       targetLang: settings.targetLang,
       glossary: gloss,
-      properNouns: properNounList,
+      properNouns: preserve,
       page: pageContext(),
     }, 100000);
     if (!res?.ok) throw new Error(res?.error || "Translation failed");
@@ -3378,7 +3395,7 @@
     for (const row of res.items || []) {
       const src = need.find((b) => b.id === row.id);
       if (src && typeof row.text === "string" && row.text && row.text !== "…") {
-        const text = restoreProperNouns(src.text, row.text);
+        const text = restoreProperNouns(src.text, row.text, preserve);
         row.text = text;
         cachePut(cacheKey(src.text), text);
         wrote = true;
@@ -3392,14 +3409,18 @@
   }
 
   /**
-   * Normalize whitelist token spelling in the translation when the model kept the
-   * name but changed case (Windows → windows). Does not invent missing names.
+   * Normalize whitelist / heuristic token spelling in the translation when the
+   * model kept the name but changed case (Windows → windows, Tim Cook → tim cook).
+   * Does not invent missing names.
    */
-  function restoreProperNouns(src, dst) {
+  function restoreProperNouns(src, dst, termList) {
     let out = String(dst ?? "");
     const s = String(src || "");
-    if (!out || !s || !properNounList.length) return out;
-    for (const term of properNounList) {
+    const terms = termList?.length
+      ? termList
+      : preserveTermsForPair(src, dst);
+    if (!out || !s || !terms.length) return out;
+    for (const term of terms) {
       const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const reSrc = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
       if (!reSrc.test(s)) continue;

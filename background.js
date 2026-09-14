@@ -243,7 +243,7 @@ function buildPrompt(targetLang, items, glossary, page, properNouns) {
   const pn =
     !pnList.length
       ? ""
-      : "专有名词白名单（原样保留，勿翻译、勿音译）:\n" +
+      : "专有名词白名单（品牌/产品/人名等，原样保留，勿翻译、勿音译）:\n" +
         pnList
           .slice(0, 80)
           .map((t) => `- ${t}`)
@@ -256,6 +256,7 @@ function buildPrompt(targetLang, items, glossary, page, properNouns) {
     (zh
       ? "译文必须是中文，禁止原样返回英文，禁止中英混抄整句。\n"
       : `Output language must be ${targetLang}, not the source language.\n`) +
+    "人名与品牌名必须原样保留（勿翻译、勿音译），即使未出现在白名单中；例如 Tim Cook、Nike、Spotify。\n" +
     "专有名词、代码、数字可保留。白名单中的词必须原样保留。\n" +
     `只输出 JSON 数组：[{"id":"...","text":"译文"}]。id/顺序/数量必须与输入一致。\n` +
     (where ? `页面: ${where}\n` : "") +
@@ -314,7 +315,7 @@ async function chatCompletionsOnce(s, items, glossary, page, cfg) {
     {
       role: "system",
       content:
-        "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。",
+        "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。人名与品牌名一律原样保留，禁止翻译或音译。",
     },
     { role: "user", content: buildPrompt(s.targetLang, items, glossary, page, s.properNouns) },
   ];
