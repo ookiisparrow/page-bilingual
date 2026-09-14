@@ -2841,6 +2841,20 @@
     return { title: document.title || "", host: location.host || "" };
   }
 
+  function reportError(message, extra) {
+    const payload = {
+      type: "PBT_LOG_ERROR",
+      message: String(message || "").slice(0, 400),
+      source: (extra && extra.source) || "content",
+      host: location.host || "",
+      itemCount: (extra && extra.itemCount) || 0,
+      engine: settings?.engine || "",
+    };
+    try {
+      chrome.runtime.sendMessage(payload, () => void chrome.runtime.lastError);
+    } catch (_) { /* SW gone */ }
+  }
+
   function runtimeSend(msg, ms) {
     const t = ms || 35000;
     return new Promise((resolve, reject) => {
@@ -2848,7 +2862,9 @@
       const timer = setTimeout(() => {
         if (done) return;
         done = true;
-        reject(new Error(`扩展后台超时 ${t / 1000}s（翻译引擎无响应）`));
+        const err = new Error(`扩展后台超时 ${t / 1000}s（翻译引擎无响应）`);
+        reportError(err.message, { source: "runtimeSend.timeout", itemCount: msg?.items?.length });
+        reject(err);
       }, t);
       try {
         chrome.runtime.sendMessage(msg, (res) => {
@@ -2856,13 +2872,17 @@
           done = true;
           clearTimeout(timer);
           const err = chrome.runtime.lastError;
-          if (err) reject(new Error(err.message || String(err)));
-          else resolve(res);
+          if (err) {
+            const m = err.message || String(err);
+            reportError(m, { source: "runtimeSend", itemCount: msg?.items?.length });
+            reject(new Error(m));
+          } else resolve(res);
         });
       } catch (e) {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        reportError(e?.message || e, { source: "runtimeSend.catch" });
         reject(e);
       }
     });
@@ -3142,6 +3162,7 @@
         } catch (err) {
           if (my !== runId) return;
           lastBatchError = String(err?.message || err).slice(0, 100);
+          reportError(err?.message || err, { source: "runQueue.batch", itemCount: batch.length });
           toast(lastBatchError, true, true);
           // 整批挂：逐条再试，能救一条是一条
           for (const it of batch) {

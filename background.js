@@ -77,6 +77,48 @@ function normalizeEngine(engine) {
   return "deepseek";
 }
 
+async function readErrorLog() {
+  const data = await chrome.storage.local.get([PBT.ERROR_LOG_KEY]);
+  const list = data[PBT.ERROR_LOG_KEY];
+  return Array.isArray(list) ? list : [];
+}
+
+async function appendErrorLog(entry) {
+  const row = {
+    t: Date.now(),
+    kind: PBT.classifyError(entry?.message),
+    message: String(entry?.message || "").slice(0, 400),
+    source: String(entry?.source || "background").slice(0, 40),
+    engine: String(entry?.engine || activeRoute || "").slice(0, 20),
+    host: String(entry?.host || "").slice(0, 120),
+    itemCount: Number(entry?.itemCount) || 0,
+    status: entry?.status != null ? Number(entry.status) || entry.status : undefined,
+  };
+  try {
+    const list = await readErrorLog();
+    list.push(row);
+    while (list.length > PBT.ERROR_LOG_CAP) list.shift();
+    await chrome.storage.local.set({ [PBT.ERROR_LOG_KEY]: list });
+  } catch (e) {
+    console.warn("[pbt] error log write failed", e);
+  }
+  // Best-effort mirror to local Cursor bridge dump (agents can read the file).
+  try {
+    const s = await PBT.loadAll();
+    const base = String(s.cursorApiUrl || PBT.DEFAULTS.cursorApiUrl || "")
+      .replace(/\/v1\/chat\/completions\/?$/i, "")
+      .replace(/\/$/, "");
+    if (base) {
+      fetch(`${base}/debug/log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(row),
+      }).catch(() => {});
+    }
+  } catch (_) { /* bridge optional */ }
+  return row;
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg?.type === "PBT_HAS_KEY") {
     PBT.loadAll()
@@ -92,10 +134,48 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       .catch((err) => reply({ ok: false, error: String(err.message || err) }));
     return true;
   }
+  if (msg?.type === "PBT_GET_ERROR_LOG") {
+    readErrorLog()
+      .then((entries) => reply({ ok: true, entries }))
+      .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (msg?.type === "PBT_CLEAR_ERROR_LOG") {
+    chrome.storage.local
+      .set({ [PBT.ERROR_LOG_KEY]: [] })
+      .then(() => reply({ ok: true }))
+      .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (msg?.type === "PBT_LOG_ERROR") {
+    appendErrorLog({
+      message: msg.message,
+      source: msg.source || "content",
+      engine: msg.engine || activeRoute,
+      host: msg.host,
+      itemCount: msg.itemCount,
+      status: msg.status,
+    })
+      .then((row) => reply({ ok: true, entry: row }))
+      .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
   if (msg?.type !== "PBT_BATCH") return;
-  translateBatch(msg.items || [], msg.targetLang, msg.glossary || [], msg.page || {})
-    .then((items) => reply({ ok: true, items, route: activeRoute }))
-    .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+  const items = msg.items || [];
+  const page = msg.page || {};
+  translateBatch(items, msg.targetLang, msg.glossary || [], page)
+    .then((out) => reply({ ok: true, items: out, route: activeRoute }))
+    .catch((err) => {
+      const message = String(err.message || err);
+      appendErrorLog({
+        message,
+        source: "PBT_BATCH",
+        engine: activeRoute,
+        host: page.host,
+        itemCount: items.length,
+        status: err.status,
+      }).finally(() => reply({ ok: false, error: message }));
+    });
   return true;
 });
 
