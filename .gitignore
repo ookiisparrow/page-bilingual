@@ -1,0 +1,22 @@
+# secrets / local
+local-key.js
+*.pem
+.env
+.env.*
+
+# packs / chrome
+*.crx
+.chrome-profile/
+page-bilingual-chrome-profile/
+**/chrome-profile/
+
+# OS / editor
+.DS_Store
+*.log
+node_modules/
+.idea/
+.vscode/
+
+# gate artifacts (large); keep docs
+accept-shots/**/*.png
+accept-shots/**/REPORT.json

@@ -1,0 +1,81 @@
+{
+  "manifest_version": 3,
+  "name": "双语网页",
+  "short_name": "双语",
+  "version": "1.4.45",
+  "description": "一键整页替换翻译；DeepSeek / Cursor bridge。",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "双语网页翻译",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.deepseek.com/*",
+    "https://*.deepseek.com/*",
+    "http://127.0.0.1:47821/*",
+    "http://localhost:47821/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "shared.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_end",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "toggle-translate": {
+      "suggested_key": {
+        "default": "Alt+A"
+      },
+      "description": "浮钮可拖缩小。翻译 / 恢复原文"
+    },
+    "translate-full-page": {
+      "suggested_key": {
+        "default": "Alt+W"
+      },
+      "description": "浮钮可拖缩小。翻译整页"
+    },
+    "translate-hovered": {
+      "suggested_key": {
+        "default": "Alt+S"
+      },
+      "description": "浮钮可拖缩小。翻译指针下的段落"
+    },
+    "translate-input": {
+      "suggested_key": {
+        "default": "Alt+I"
+      },
+      "description": "浮钮可拖缩小。翻译当前输入框"
+    }
+  }
+}

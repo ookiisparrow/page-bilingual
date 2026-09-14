@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PageBilingual — sample article</title>
+    <style>
+      body { margin: 0; font: 18px/1.6 Georgia, "Times New Roman", serif; color: #1a1a1a; }
+      header, footer, nav { font-family: ui-sans-serif, system-ui, sans-serif; background: #111; color: #eee; }
+      nav { display: flex; gap: 18px; padding: 12px 28px; font-size: 14px; align-items: center; }
+      nav button { font: 13px system-ui; }
+      header { padding: 28px 28px 8px; }
+      header p { color: #bbb; font-size: 14px; }
+      #toc { float: left; width: 160px; margin: 24px 0 16px 20px; padding: 12px; background: #f4f4f4; font: 14px system-ui; }
+      main { max-width: 720px; margin: 0 auto; padding: 24px 20px 64px; }
+      h1 { font-size: 34px; line-height: 1.2; }
+      aside { float: right; width: 180px; margin: 0 0 16px 24px; padding: 12px; background: #f3f3f3; font-size: 14px; }
+      footer { clear: both; padding: 20px 28px; font-size: 13px; }
+      pre { background: #0f172a; color: #e2e8f0; padding: 12px 14px; overflow: auto; font-size: 14px; }
+      .code-example { border: 1px solid #ddd; padding: 8px; background: #fafafa; }
+      label { font: 15px system-ui; }
+      input { font: 15px system-ui; padding: 6px 8px; width: min(420px, 100%); }
+    </style>
+  </head>
+  <body>
+    <nav role="navigation">
+      <a href="#home">Home</a>
+      <a href="#archive">Archive</a>
+      <button type="button">Subscribe</button>
+    </nav>
+    <header>
+      <p>Sample magazine · 13 September 2026 · Jane Doe</p>
+    </header>
+    <nav id="toc" class="toc">
+      <strong>Contents</strong>
+      <ol>
+        <li><a href="#why">Why it sticks</a></li>
+        <li><a href="#skip">What to skip</a></li>
+      </ol>
+    </nav>
+    <main>
+      <article>
+        <h1>Why bilingual reading sticks</h1>
+        <p>
+          Most people bounce between a foreign article and a separate translation tab.
+          The eyes lose the place, the argument frays, and the original cadence disappears.
+          PageBilingual keeps both languages on the same paragraph so you can check a phrase
+          without leaving the thought.
+        </p>
+        <aside>Related: last month’s notes. Sidebar chrome should stay original in main-content mode.</aside>
+        <p id="why">
+          A paragraph is a complete move in an essay: a claim, a turn, a piece of evidence.
+          Sentence-by-sentence soup can be accurate and still feel like someone shuffled the deck.
+          When the translation sits directly under the block it belongs to, you can pin a term
+          such as PageBilingual and keep that rendering for the rest of the page.
+        </p>
+        <p>
+          Engineers already do a version of this when they read error logs next to source.
+          The two streams are not competitors. They are a stereo signal. You hear the idea in
+          your stronger language and still keep the texture of the original.
+        </p>
+        <h2 id="skip">What to skip on a real page</h2>
+        <p>
+          Navigation, timestamps, and cookie banners are not the article. Translating them
+          makes the chrome noisier. A useful tool aims at the main column first
+          and still refuses to rewrite buttons when you ask for the entire page.
+        </p>
+        <div class="code-example">
+          <pre><code>function greet(name) {
+  return `hello, ${name}`;
+}</code></pre>
+        </div>
+        <p>
+          Code, formulas, and input fields should stay untouched. If you are typing a reply,
+          you want a deliberate gesture — a shortcut or a quick triple-space — not a surprise rewrite.
+        </p>
+        <p>
+          <label for="box">Reply (triple-space to translate)</label><br />
+          <input id="box" type="text" placeholder="Type here then space space space" />
+        </p>
+        <blockquote>
+          The goal is not to hide the original. The goal is to stand next to it long enough
+          that the new language starts to feel walkable.
+        </blockquote>
+        <p>
+          This page exists so you can sideload Page Bilingual and click once.
+          If Cursor is connected, each paragraph should grow a Simplified Chinese line beneath
+          the English without wrecking the layout. Failed lines keep an id and a Retry control.
+        </p>
+      </article>
+    </main>
+    <footer>© 2026 Sample magazine. Footer chrome — skip in main-content mode.</footer>
+  </body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PageBilingual — collapse / menu fixture</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+      details { border: 1px solid #ddd; border-radius: 8px; padding: 8px 12px; margin: 16px 0; }
+      summary { cursor: pointer; font-weight: 600; }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .chevron { width: 16px; height: 16px; }
+      [role="menu"] { border: 1px solid #ccc; border-radius: 8px; padding: 4px; width: 220px; background: #fff; }
+      [role="menuitem"] {
+        display: flex; align-items: center; gap: 8px; width: 100%;
+        border: 0; background: transparent; padding: 8px 10px; text-align: left; cursor: pointer;
+      }
+      [role="menuitem"]:hover { background: #f3f4f6; }
+      #dropdown { display: none; margin-top: 8px; border: 1px solid #ddd; border-radius: 8px; padding: 8px; }
+      #dropdown.open { display: block; }
+      .note { color: #555; font-size: 14px; margin-top: 24px; }
+    </style>
+  </head>
+  <body>
+    <h1>Collapse, menu, and dropdown fixture</h1>
+    <p>
+      Load this page with the extension, translate, then open each control below.
+      Newly visible panel body, menu labels, and dropdown options should receive translations
+      after open (observer watches open / aria-expanded / hidden / class).
+    </p>
+
+    <h2>1. details fold</h2>
+    <details>
+      <summary class="row">
+        <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor"/></svg>
+        Advanced settings
+      </summary>
+      <p>
+        When this panel opens, the paragraph inside should be collected and translated.
+        Short flex headings next to chevrons may stay untranslated on purpose.
+      </p>
+    </details>
+
+    <h2>2. role=menu with button menuitems (icons)</h2>
+    <div role="menu" aria-label="Actions">
+      <button type="button" role="menuitem">
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="currentColor"/></svg>
+        Open in new tab
+      </button>
+      <button type="button" role="menuitem">
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" fill="currentColor"/></svg>
+        Copy link address
+      </button>
+      <button type="button" role="menuitem">Save page as…</button>
+    </div>
+
+    <h2>3. hidden → shown dropdown</h2>
+    <button type="button" id="toggle" aria-expanded="false">Show options</button>
+    <div id="dropdown" role="listbox" hidden>
+      <div role="option">Prefer compact layout</div>
+      <div role="option">Show bilingual captions</div>
+      <div role="option">Keep original punctuation</div>
+    </div>
+
+    <p class="note">
+      Verify: Alt+A translate → open details / open menu is already visible → click Show options.
+      Menu item text should swap in place (icons kept). Dropdown options translate after open.
+      Do not expect .pbt-tr siblings inside the menu.
+    </p>
+    <script>
+      const btn = document.getElementById("toggle");
+      const dd = document.getElementById("dropdown");
+      btn.addEventListener("click", () => {
+        const open = dd.hasAttribute("hidden");
+        if (open) {
+          dd.removeAttribute("hidden");
+          dd.classList.add("open");
+          btn.setAttribute("aria-expanded", "true");
+        } else {
+          dd.setAttribute("hidden", "");
+          dd.classList.remove("open");
+          btn.setAttribute("aria-expanded", "false");
+        }
+      });
+    </script>
+  </body>
+</html>

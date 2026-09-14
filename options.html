@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>双语网页 — 选项</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        font: 14px/1.5 ui-sans-serif, system-ui, sans-serif;
+        color: #111827;
+        background: #f3f4f6;
+      }
+      main {
+        max-width: 640px;
+        margin: 32px auto;
+        background: #fff;
+        padding: 28px 32px;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,.06);
+      }
+      h1 { font-size: 20px; margin: 0 0 6px; }
+      p.lead { color: #4b5563; margin: 0 0 20px; }
+      label { display: block; font-weight: 600; margin: 14px 0 6px; }
+      input[type="text"], input[type="password"], input[type="url"], select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font: inherit;
+      }
+      .hint { color: #6b7280; font-size: 12px; margin: 4px 0 0; }
+      .check { display: flex; gap: 8px; align-items: center; font-weight: 500; margin: 10px 0; }
+      .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      button {
+        margin-top: 20px;
+        background: #000;
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 14px;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+      #saved { margin-left: 10px; color: #000; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>双语网页</h1>
+      <p class="lead">默认引擎 DeepSeek V4.1 Flash（模型名 <code>deepseek-flash</code>）。密钥只存在扩展本地，页面脚本读不到。</p>
+
+      <label for="deepseekApiKey">DeepSeek API Key</label>
+      <input id="deepseekApiKey" type="password" autocomplete="off" placeholder="在 platform.deepseek.com 创建" />
+      <p class="hint">到 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">platform.deepseek.com/api_keys</a> 创建。</p>
+
+      <label for="engine">引擎</label>
+      <select id="engine">
+        <option value="deepseek">DeepSeek V4.1 Flash（推荐）</option>
+        <option value="cursor">Cursor 本地 bridge</option>
+      </select>
+
+      <label for="targetLang">目标语言</label>
+      <select id="targetLang"></select>
+
+      <details>
+        <summary style="cursor:pointer;font-weight:650;margin:18px 0 8px">高级设置</summary>
+
+      <label for="deepseekApiUrl">DeepSeek API 地址</label>
+      <input id="deepseekApiUrl" type="url" />
+      <label for="deepseekModel">DeepSeek 模型</label>
+      <input id="deepseekModel" type="text" placeholder="deepseek-flash" />
+      <p class="hint">V4.1 Flash 官方模型名是 <code>deepseek-flash</code>。</p>
+
+      <label for="cursorApiUrl">Cursor bridge URL</label>
+      <input id="cursorApiUrl" type="url" placeholder="http://127.0.0.1:47821/v1/chat/completions" />
+      <label for="cursorModel">Cursor 模型（可选）</label>
+      <input id="cursorModel" type="text" placeholder="composer-2.5-fast" />
+      <p class="hint">视觉核验 / 桌面门禁走 Cursor bridge；需先启动 <code>bridge/server.mjs</code>。</p>
+
+      <label>默认显示</label>
+      <select id="displayMode">
+        <option value="replace">整页替换（推荐·浮钮唯一模式）</option>
+        <option value="bilingual">双语（原文 + 译文）</option>
+        <option value="translation">仅译文（隐藏原文）</option>
+      </select>
+      <p class="hint">页内浮钮固定走「整页替换」。此处仅影响高级/旧路径；推荐保持「整页替换」。</p>
+
+      <label>默认范围</label>
+      <select id="scope">
+        <option value="full">整页</option>
+        <option value="main">正文</option>
+      </select>
+
+      <label for="excludeCss">额外跳过选择器</label>
+      <input id="excludeCss" type="text" placeholder=".my-widget, #promo" />
+
+      <label class="check"><input type="checkbox" id="hoverEnabled" /> 悬停气泡（需按修饰键）</label>
+      <label for="hoverKey">悬停修饰键</label>
+      <select id="hoverKey">
+        <option value="Alt">Alt</option>
+        <option value="Shift">Shift</option>
+        <option value="Control">Control / ⌘</option>
+      </select>
+      <label class="check"><input type="checkbox" id="selectionEnabled" /> 划词卡片</label>
+      <label class="check"><input type="checkbox" id="inputEnabled" /> 输入框翻译</label>
+      <label for="inputGesture">输入框手势</label>
+      <select id="inputGesture">
+        <option value="triple-space">连按三下空格</option>
+        <option value="shortcut">仅快捷键</option>
+      </select>
+
+      <label>译文样式</label>
+      <div class="row">
+        <div>
+          <label for="trSize">字号</label>
+          <input id="trSize" type="text" placeholder="0.95em" />
+        </div>
+        <div>
+          <label for="trColor">颜色</label>
+          <input id="trColor" type="text" placeholder="#3f4a5a" />
+        </div>
+        <div>
+          <label for="trOpacity">透明度</label>
+          <input id="trOpacity" type="text" placeholder="1" />
+        </div>
+      </div>
+      </details>
+
+      <button id="save" type="button">保存</button>
+      <span id="saved"></span>
+    </main>
+    <script src="shared.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

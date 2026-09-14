@@ -1,0 +1,2578 @@
+{
+  "generatedAt": "2026-09-13T18:41:40.996Z",
+  "generatedAtShanghai": "2026/9/14 02:41:41",
+  "steeringExpectedVersion": "1.4.8",
+  "observedVersion": {
+    "version": "1.4.11",
+    "name": "双语网页",
+    "description": "浮钮可拖缩小。一键翻译。跳过不计失败；热冷不并发；缺段再打。"
+  },
+  "versionMatch": false,
+  "note": "Steering asked to confirm 1.4.8; loaded manifest is 1.4.11. Continued matrix against loaded build (did not block).",
+  "cases": [
+    {
+      "name": "wiki-mobile",
+      "url": "https://en.wikipedia.org/wiki/Goal_setting",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~2s",
+        "G1: 48 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G4: history heading ok",
+        "G3: mode toggle 双→单 ok"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 8,
+          "trs": 8,
+          "ok": 8,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "为实现目标而制定行动计划",
+            "目标设定涉及制定一份行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+            "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是因为他们拥有不",
+            "困难而具体的目标会带来显著高于简单目标、无目标，甚至设定诸如敦促人们尽力而为这类抽象目标的表现。"
+          ],
+          "historyBox": {
+            "w": 46,
+            "h": 20,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Goal setting - Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Goal_setting",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 28,
+          "trs": 28,
+          "ok": 28,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "为实现目标而制定行动计划",
+            "目标设定涉及制定一份行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+            "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是因为他们拥有不",
+            "困难而具体的目标会带来显著高于简单目标、无目标，甚至设定诸如敦促人们尽力而为这类抽象目标的表现。"
+          ],
+          "historyBox": {
+            "w": 46,
+            "h": 20,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Goal setting - Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Goal_setting",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 16,
+          "hosts": 43,
+          "trs": 43,
+          "ok": 43,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "为实现目标而制定行动计划",
+            "目标设定涉及制定一份行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+            "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是因为他们拥有不",
+            "困难而具体的目标会带来显著高于简单目标、无目标，甚至设定诸如敦促人们尽力而为这类抽象目标的表现。"
+          ],
+          "historyBox": {
+            "w": 46,
+            "h": 20,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Goal setting - Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Goal_setting",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 20,
+              "mode": "显"
+            },
+            "afterOk": 48
+          }
+        }
+      ],
+      "watchSec": 16,
+      "final": {
+        "hosts": 48,
+        "trs": 48,
+        "ok": 48,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "为实现目标而制定行动计划",
+          "目标设定涉及制定一份行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+          "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是因为他们拥有不",
+          "困难而具体的目标会带来显著高于简单目标、无目标，甚至设定诸如敦促人们尽力而为这类抽象目标的表现。"
+        ],
+        "historyBox": {
+          "w": 46,
+          "h": 20,
+          "text": "History"
+        },
+        "squeezed": [],
+        "chipLike": [],
+        "fileRows": [],
+        "title": "Goal setting - Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Goal_setting",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 2,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-wiki-mobile.png"
+    },
+    {
+      "name": "google-mobile",
+      "url": "https://www.google.com/search?q=Ookla",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~1s",
+        "G1: 5 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G3: mode toggle 双→单 ok",
+        "S3: chip-like rows not vertically exploded"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 5,
+          "trs": 5,
+          "ok": 5,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "Ookla 出品的 Speedtest - 全球宽带速度测试",
+            "隐私政策",
+            "关于",
+            "Speedtest.net 桌面应用"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "AI 模式",
+              "w": 69,
+              "h": 48
+            },
+            {
+              "t": "全部",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "图片",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "购物",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "视频",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "新闻",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "短视频",
+              "w": 66,
+              "h": 48
+            },
+            {
+              "t": "网页",
+              "w": 0,
+              "h": 0
+            }
+          ],
+          "fileRows": [],
+          "title": "Ookla - Google 搜索",
+          "url": "https://www.google.com/search?q=Ookla",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 5,
+          "trs": 5,
+          "ok": 5,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "Ookla 出品的 Speedtest - 全球宽带速度测试",
+            "隐私政策",
+            "关于",
+            "Speedtest.net 桌面应用"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "AI 模式",
+              "w": 69,
+              "h": 48
+            },
+            {
+              "t": "全部",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "图片",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "购物",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "视频",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "新闻",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "短视频",
+              "w": 66,
+              "h": 48
+            },
+            {
+              "t": "网页",
+              "w": 0,
+              "h": 0
+            }
+          ],
+          "fileRows": [],
+          "title": "Ookla - Google 搜索",
+          "url": "https://www.google.com/search?q=Ookla",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 12,
+          "hosts": 5,
+          "trs": 5,
+          "ok": 5,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "Ookla 出品的 Speedtest - 全球宽带速度测试",
+            "隐私政策",
+            "关于",
+            "Speedtest.net 桌面应用"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "AI 模式",
+              "w": 69,
+              "h": 48
+            },
+            {
+              "t": "全部",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "图片",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "购物",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "视频",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "新闻",
+              "w": 52,
+              "h": 48
+            },
+            {
+              "t": "短视频",
+              "w": 66,
+              "h": 48
+            },
+            {
+              "t": "网页",
+              "w": 0,
+              "h": 0
+            }
+          ],
+          "fileRows": [],
+          "title": "Ookla - Google 搜索",
+          "url": "https://www.google.com/search?q=Ookla",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 4,
+              "mode": "显"
+            },
+            "afterOk": 5
+          }
+        }
+      ],
+      "watchSec": 12,
+      "final": {
+        "hosts": 5,
+        "trs": 5,
+        "ok": 5,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "Ookla 出品的 Speedtest - 全球宽带速度测试",
+          "隐私政策",
+          "关于",
+          "Speedtest.net 桌面应用"
+        ],
+        "historyBox": null,
+        "squeezed": [],
+        "chipLike": [
+          {
+            "t": "AI 模式",
+            "w": 69,
+            "h": 48
+          },
+          {
+            "t": "全部",
+            "w": 52,
+            "h": 48
+          },
+          {
+            "t": "图片",
+            "w": 52,
+            "h": 48
+          },
+          {
+            "t": "购物",
+            "w": 52,
+            "h": 48
+          },
+          {
+            "t": "视频",
+            "w": 52,
+            "h": 48
+          },
+          {
+            "t": "新闻",
+            "w": 52,
+            "h": 48
+          },
+          {
+            "t": "短视频",
+            "w": 66,
+            "h": 48
+          },
+          {
+            "t": "网页",
+            "w": 0,
+            "h": 0
+          }
+        ],
+        "fileRows": [],
+        "title": "Ookla - Google 搜索",
+        "url": "https://www.google.com/search?q=Ookla",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 1,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-google-mobile.png"
+    },
+    {
+      "name": "github-mobile",
+      "url": "https://github.com/microsoft/vscode",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~3s",
+        "G1: 10 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G4: history heading ok",
+        "G3: mode toggle 双→单 ok",
+        "S4: file/meta rows not exploded"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 10,
+          "trs": 3,
+          "ok": 10,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "哎呀！",
+            "加载时出错。请重新加载此页面。",
+            "通知 您必须登录才能更改通知设置"
+          ],
+          "historyBox": {
+            "w": 1,
+            "h": 1,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "README",
+              "w": 99,
+              "h": 32
+            },
+            {
+              "t": "Code of conduct",
+              "w": 152,
+              "h": 32
+            },
+            {
+              "t": "Contributing",
+              "w": 125,
+              "h": 32
+            },
+            {
+              "t": "MIT license",
+              "w": 117,
+              "h": 32
+            },
+            {
+              "t": "Security",
+              "w": 96,
+              "h": 32
+            }
+          ],
+          "fileRows": [
+            {
+              "h": 40,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 0,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 40,
+              "t": ".config"
+            },
+            {
+              "h": 0,
+              "t": ".config"
+            },
+            {
+              "h": 40,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 0,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 40,
+              "t": ".eslint-plugin-local"
+            },
+            {
+              "h": 0,
+              "t": ".eslint-plugin-local"
+            }
+          ],
+          "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+          "url": "https://github.com/microsoft/vscode",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 10,
+          "trs": 3,
+          "ok": 10,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "哎呀！",
+            "加载时出错。请重新加载此页面。",
+            "通知 您必须登录才能更改通知设置"
+          ],
+          "historyBox": {
+            "w": 1,
+            "h": 1,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "README",
+              "w": 99,
+              "h": 32
+            },
+            {
+              "t": "Code of conduct",
+              "w": 152,
+              "h": 32
+            },
+            {
+              "t": "Contributing",
+              "w": 125,
+              "h": 32
+            },
+            {
+              "t": "MIT license",
+              "w": 117,
+              "h": 32
+            },
+            {
+              "t": "Security",
+              "w": 96,
+              "h": 32
+            }
+          ],
+          "fileRows": [
+            {
+              "h": 40,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 0,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 40,
+              "t": ".config"
+            },
+            {
+              "h": 0,
+              "t": ".config"
+            },
+            {
+              "h": 40,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 0,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 40,
+              "t": ".eslint-plugin-local"
+            },
+            {
+              "h": 0,
+              "t": ".eslint-plugin-local"
+            }
+          ],
+          "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+          "url": "https://github.com/microsoft/vscode",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 14,
+          "hosts": 10,
+          "trs": 2,
+          "ok": 10,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "加载时出错。请重新加载此页面。",
+            "通知 您必须登录才能更改通知设置"
+          ],
+          "historyBox": {
+            "w": 1,
+            "h": 1,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "README",
+              "w": 99,
+              "h": 32
+            },
+            {
+              "t": "Code of conduct",
+              "w": 152,
+              "h": 32
+            },
+            {
+              "t": "Contributing",
+              "w": 125,
+              "h": 32
+            },
+            {
+              "t": "MIT license",
+              "w": 117,
+              "h": 32
+            },
+            {
+              "t": "Security",
+              "w": 96,
+              "h": 32
+            }
+          ],
+          "fileRows": [
+            {
+              "h": 40,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 0,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 40,
+              "t": ".config"
+            },
+            {
+              "h": 0,
+              "t": ".config"
+            },
+            {
+              "h": 40,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 0,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 40,
+              "t": ".eslint-plugin-local"
+            },
+            {
+              "h": 0,
+              "t": ".eslint-plugin-local"
+            }
+          ],
+          "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+          "url": "https://github.com/microsoft/vscode",
+          "fab": {
+            "orb": "原",
+            "mode": "显",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 0,
+              "mode": "显"
+            },
+            "afterOk": 10
+          }
+        }
+      ],
+      "watchSec": 14,
+      "final": {
+        "hosts": 10,
+        "trs": 3,
+        "ok": 10,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "哎呀！",
+          "加载时出错。请重新加载此页面。",
+          "通知 您必须登录才能更改通知设置"
+        ],
+        "historyBox": {
+          "w": 1,
+          "h": 1,
+          "text": "History"
+        },
+        "squeezed": [],
+        "chipLike": [
+          {
+            "t": "README",
+            "w": 99,
+            "h": 32
+          },
+          {
+            "t": "Code of conduct",
+            "w": 152,
+            "h": 32
+          },
+          {
+            "t": "Contributing",
+            "w": 125,
+            "h": 32
+          },
+          {
+            "t": "MIT license",
+            "w": 117,
+            "h": 32
+          },
+          {
+            "t": "Security",
+            "w": 96,
+            "h": 32
+          }
+        ],
+        "fileRows": [
+          {
+            "h": 40,
+            "t": ".agents/skills/launch"
+          },
+          {
+            "h": 0,
+            "t": ".agents/skills/launch"
+          },
+          {
+            "h": 40,
+            "t": ".config"
+          },
+          {
+            "h": 0,
+            "t": ".config"
+          },
+          {
+            "h": 40,
+            "t": ".devcontainer"
+          },
+          {
+            "h": 0,
+            "t": ".devcontainer"
+          },
+          {
+            "h": 40,
+            "t": ".eslint-plugin-local"
+          },
+          {
+            "h": 0,
+            "t": ".eslint-plugin-local"
+          }
+        ],
+        "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+        "url": "https://github.com/microsoft/vscode",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 3,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-github-mobile.png"
+    },
+    {
+      "name": "cloudflare-blog-mobile",
+      "url": "https://blog.cloudflare.com/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~2s",
+        "G1: 38 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G3: mode toggle 双→单 ok"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 10,
+          "trs": 10,
+          "ok": 10,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "Cloudflare CASB 推出自动修复策略",
+            "Cloudflare CASB 策略引入了一个原生自动化引擎，直接构建在 Cloudflare ",
+            "1.1.1.1 现已支持后量子 DNSSEC，全部 2,420 字节",
+            "1.1.1.1 现已使用 NIST 的后量子 ML-DSA-44 算法验证 DNSSEC 签名。"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Cloudflare Blog",
+          "url": "https://blog.cloudflare.com/",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 30,
+          "trs": 30,
+          "ok": 30,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "Cloudflare CASB 推出自动修复策略",
+            "Cloudflare CASB 策略引入了一个原生自动化引擎，直接构建在 Cloudflare ",
+            "1.1.1.1 现已支持后量子 DNSSEC，全部 2,420 字节",
+            "1.1.1.1 现已使用 NIST 的后量子 ML-DSA-44 算法验证 DNSSEC 签名。"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Cloudflare Blog",
+          "url": "https://blog.cloudflare.com/",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 14,
+          "hosts": 38,
+          "trs": 38,
+          "ok": 38,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "Cloudflare CASB 推出自动修复策略",
+            "Cloudflare CASB 策略引入了一个原生自动化引擎，直接构建在 Cloudflare ",
+            "1.1.1.1 现已支持后量子 DNSSEC，全部 2,420 字节",
+            "1.1.1.1 现已使用 NIST 的后量子 ML-DSA-44 算法验证 DNSSEC 签名。"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Cloudflare Blog",
+          "url": "https://blog.cloudflare.com/",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 0,
+              "mode": "显"
+            },
+            "afterOk": 38
+          }
+        }
+      ],
+      "watchSec": 14,
+      "final": {
+        "hosts": 38,
+        "trs": 38,
+        "ok": 38,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "Cloudflare CASB 推出自动修复策略",
+          "Cloudflare CASB 策略引入了一个原生自动化引擎，直接构建在 Cloudflare ",
+          "1.1.1.1 现已支持后量子 DNSSEC，全部 2,420 字节",
+          "1.1.1.1 现已使用 NIST 的后量子 ML-DSA-44 算法验证 DNSSEC 签名。"
+        ],
+        "historyBox": null,
+        "squeezed": [],
+        "chipLike": [],
+        "fileRows": [],
+        "title": "Cloudflare Blog",
+        "url": "https://blog.cloudflare.com/",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 2,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-cloudflare-blog-mobile.png"
+    },
+    {
+      "name": "stripe-mobile",
+      "url": "https://stripe.com/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~1s",
+        "G1: 1 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G3: mode toggle 双→单 ok"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 1,
+          "trs": 1,
+          "ok": 1,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "2025 年，Stripe 上的企业创造了 1.9 万亿美元的价值。"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+              "w": 358,
+              "h": 478
+            },
+            {
+              "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Browserbase 使用 Stripe 为其 AI 智能",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+              "w": 340,
+              "h": 454
+            }
+          ],
+          "fileRows": [],
+          "title": "Stripe | 金融基础设施，托举营收增长",
+          "url": "https://stripe.com/zh-us",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 1,
+          "trs": 1,
+          "ok": 1,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "2025 年，Stripe 上的企业创造了 1.9 万亿美元的价值。"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+              "w": 358,
+              "h": 478
+            },
+            {
+              "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Browserbase 使用 Stripe 为其 AI 智能",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+              "w": 340,
+              "h": 454
+            }
+          ],
+          "fileRows": [],
+          "title": "Stripe | 金融基础设施，托举营收增长",
+          "url": "https://stripe.com/zh-us",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 12,
+          "hosts": 1,
+          "trs": 1,
+          "ok": 1,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "2025 年，Stripe 上的企业创造了 1.9 万亿美元的价值。"
+          ],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+              "w": 358,
+              "h": 478
+            },
+            {
+              "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Browserbase 使用 Stripe 为其 AI 智能",
+              "w": 340,
+              "h": 454
+            },
+            {
+              "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+              "w": 340,
+              "h": 454
+            }
+          ],
+          "fileRows": [],
+          "title": "Stripe | 金融基础设施，托举营收增长",
+          "url": "https://stripe.com/zh-us",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 0,
+              "mode": "显"
+            },
+            "afterOk": 1
+          }
+        }
+      ],
+      "watchSec": 12,
+      "final": {
+        "hosts": 1,
+        "trs": 1,
+        "ok": 1,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "2025 年，Stripe 上的企业创造了 1.9 万亿美元的价值。"
+        ],
+        "historyBox": null,
+        "squeezed": [],
+        "chipLike": [
+          {
+            "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+            "w": 358,
+            "h": 478
+          },
+          {
+            "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+            "w": 340,
+            "h": 454
+          },
+          {
+            "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+            "w": 340,
+            "h": 454
+          },
+          {
+            "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+            "w": 340,
+            "h": 454
+          },
+          {
+            "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+            "w": 340,
+            "h": 454
+          },
+          {
+            "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+            "w": 340,
+            "h": 454
+          },
+          {
+            "t": "Browserbase 使用 Stripe 为其 AI 智能",
+            "w": 340,
+            "h": 454
+          },
+          {
+            "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+            "w": 340,
+            "h": 454
+          }
+        ],
+        "fileRows": [],
+        "title": "Stripe | 金融基础设施，托举营收增长",
+        "url": "https://stripe.com/zh-us",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 1,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-mobile.png"
+    },
+    {
+      "name": "wiki-desktop",
+      "url": "https://en.wikipedia.org/wiki/Goal_setting",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~3s",
+        "G1: 47 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G4: history heading ok",
+        "G3: mode toggle 双→单 ok"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 10,
+          "trs": 10,
+          "ok": 10,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "制定行动计划以实现目标",
+            "目标设定涉及制定一项行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+            "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是：他们拥有不同",
+            "困难的特定目标会带来显著高于容易目标、没有目标、甚至设定诸如敦促人们尽力而为这类抽象目标时的绩效"
+          ],
+          "historyBox": {
+            "w": 46,
+            "h": 20,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Goal setting - Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Goal_setting",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 27,
+          "trs": 27,
+          "ok": 27,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "制定行动计划以实现目标",
+            "目标设定涉及制定一项行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+            "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是：他们拥有不同",
+            "困难的特定目标会带来显著高于容易目标、没有目标、甚至设定诸如敦促人们尽力而为这类抽象目标时的绩效"
+          ],
+          "historyBox": {
+            "w": 46,
+            "h": 20,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Goal setting - Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Goal_setting",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 14,
+          "hosts": 40,
+          "trs": 40,
+          "ok": 40,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "制定行动计划以实现目标",
+            "目标设定涉及制定一项行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+            "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是：他们拥有不同",
+            "困难的特定目标会带来显著高于容易目标、没有目标、甚至设定诸如敦促人们尽力而为这类抽象目标时的绩效"
+          ],
+          "historyBox": {
+            "w": 46,
+            "h": 20,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [],
+          "fileRows": [],
+          "title": "Goal setting - Wikipedia",
+          "url": "https://en.wikipedia.org/wiki/Goal_setting",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 20,
+              "mode": "显"
+            },
+            "afterOk": 47
+          }
+        }
+      ],
+      "watchSec": 14,
+      "final": {
+        "hosts": 47,
+        "trs": 47,
+        "ok": 47,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "制定行动计划以实现目标",
+          "目标设定涉及制定一项行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+          "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是：他们拥有不同",
+          "困难的特定目标会带来显著高于容易目标、没有目标、甚至设定诸如敦促人们尽力而为这类抽象目标时的绩效"
+        ],
+        "historyBox": {
+          "w": 46,
+          "h": 20,
+          "text": "History"
+        },
+        "squeezed": [],
+        "chipLike": [],
+        "fileRows": [],
+        "title": "Goal setting - Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Goal_setting",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 3,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-wiki-desktop.png"
+    },
+    {
+      "name": "github-desktop-menu",
+      "url": "https://github.com/microsoft/vscode",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G1: first ok at ~4s",
+        "G1: 39 ok / skip 0 / fail 0",
+        "G4: no short-heading vertical squeeze",
+        "G4: history heading ok",
+        "G3: mode toggle 双→单 ok",
+        "S4: file/meta rows not exploded",
+        "S6: opened a dropdown/summary"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 5,
+          "trs": 3,
+          "ok": 5,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "哎呀！",
+            "加载时出错。请重新加载此页面。",
+            "通知 你必须登录才能更改通知设置"
+          ],
+          "historyBox": {
+            "w": 1,
+            "h": 1,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "README",
+              "w": 99,
+              "h": 32
+            },
+            {
+              "t": "Code of conduct",
+              "w": 152,
+              "h": 32
+            },
+            {
+              "t": "Contributing",
+              "w": 125,
+              "h": 32
+            },
+            {
+              "t": "MIT license",
+              "w": 117,
+              "h": 32
+            },
+            {
+              "t": "Security",
+              "w": 96,
+              "h": 32
+            }
+          ],
+          "fileRows": [
+            {
+              "h": 0,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 40,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 0,
+              "t": ".config"
+            },
+            {
+              "h": 40,
+              "t": ".config"
+            },
+            {
+              "h": 0,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 40,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 0,
+              "t": ".eslint-plugin-local"
+            },
+            {
+              "h": 40,
+              "t": ".eslint-plugin-local"
+            }
+          ],
+          "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+          "url": "https://github.com/microsoft/vscode",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 29,
+          "trs": 21,
+          "ok": 29,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "哎呀！",
+            "加载时出错。请重新加载此页面。",
+            "通知 你必须登录才能更改通知设置",
+            "会话：简化仓库选择 (#335358)"
+          ],
+          "historyBox": {
+            "w": 1,
+            "h": 1,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "README",
+              "w": 99,
+              "h": 32
+            },
+            {
+              "t": "Code of conduct",
+              "w": 152,
+              "h": 32
+            },
+            {
+              "t": "Contributing",
+              "w": 125,
+              "h": 32
+            },
+            {
+              "t": "MIT license",
+              "w": 117,
+              "h": 32
+            },
+            {
+              "t": "Security",
+              "w": 96,
+              "h": 32
+            }
+          ],
+          "fileRows": [
+            {
+              "h": 0,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 40,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 0,
+              "t": ".config"
+            },
+            {
+              "h": 40,
+              "t": ".config"
+            },
+            {
+              "h": 0,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 40,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 0,
+              "t": ".eslint-plugin-local"
+            },
+            {
+              "h": 40,
+              "t": ".eslint-plugin-local"
+            }
+          ],
+          "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+          "url": "https://github.com/microsoft/vscode",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 12,
+          "hosts": 39,
+          "trs": 31,
+          "ok": 39,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [
+            "哎呀！",
+            "加载时出错。请重新加载此页面。",
+            "通知 你必须登录才能更改通知设置",
+            "会话：简化仓库选择 (#335358)"
+          ],
+          "historyBox": {
+            "w": 1,
+            "h": 1,
+            "text": "History"
+          },
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "README",
+              "w": 99,
+              "h": 32
+            },
+            {
+              "t": "Code of conduct",
+              "w": 152,
+              "h": 32
+            },
+            {
+              "t": "Contributing",
+              "w": 125,
+              "h": 32
+            },
+            {
+              "t": "MIT license",
+              "w": 117,
+              "h": 32
+            },
+            {
+              "t": "Security",
+              "w": 96,
+              "h": 32
+            }
+          ],
+          "fileRows": [
+            {
+              "h": 0,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 40,
+              "t": ".agents/skills/launch"
+            },
+            {
+              "h": 0,
+              "t": ".config"
+            },
+            {
+              "h": 40,
+              "t": ".config"
+            },
+            {
+              "h": 0,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 40,
+              "t": ".devcontainer"
+            },
+            {
+              "h": 0,
+              "t": ".eslint-plugin-local"
+            },
+            {
+              "h": 40,
+              "t": ".eslint-plugin-local"
+            }
+          ],
+          "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+          "url": "https://github.com/microsoft/vscode",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 28,
+              "mode": "显"
+            },
+            "afterOk": 39
+          }
+        },
+        {
+          "menu": {
+            "ok": true,
+            "tried": [
+              {
+                "sel": "summary[aria-label*=\"Add file\"]",
+                "clicked": false
+              },
+              {
+                "sel": "summary:has-text(\"Add file\")",
+                "clicked": false
+              },
+              {
+                "sel": "button:has-text(\"Code\")",
+                "clicked": true
+              }
+            ],
+            "menuText": [
+              {
+                "t": "代码 问题 拉取请求 操作 项目 维基 安全与质量 洞察",
+                "hosts": 8,
+                "trs": 0,
+                "open": true
+              }
+            ]
+          }
+        }
+      ],
+      "watchSec": 12,
+      "final": {
+        "hosts": 39,
+        "trs": 31,
+        "ok": 39,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [
+          "哎呀！",
+          "加载时出错。请重新加载此页面。",
+          "通知 你必须登录才能更改通知设置",
+          "会话：简化仓库选择 (#335358)"
+        ],
+        "historyBox": {
+          "w": 1,
+          "h": 1,
+          "text": "History"
+        },
+        "squeezed": [],
+        "chipLike": [
+          {
+            "t": "README",
+            "w": 99,
+            "h": 32
+          },
+          {
+            "t": "Code of conduct",
+            "w": 152,
+            "h": 32
+          },
+          {
+            "t": "Contributing",
+            "w": 125,
+            "h": 32
+          },
+          {
+            "t": "MIT license",
+            "w": 117,
+            "h": 32
+          },
+          {
+            "t": "Security",
+            "w": 96,
+            "h": 32
+          }
+        ],
+        "fileRows": [
+          {
+            "h": 0,
+            "t": ".agents/skills/launch"
+          },
+          {
+            "h": 40,
+            "t": ".agents/skills/launch"
+          },
+          {
+            "h": 0,
+            "t": ".config"
+          },
+          {
+            "h": 40,
+            "t": ".config"
+          },
+          {
+            "h": 0,
+            "t": ".devcontainer"
+          },
+          {
+            "h": 40,
+            "t": ".devcontainer"
+          },
+          {
+            "h": 0,
+            "t": ".eslint-plugin-local"
+          },
+          {
+            "h": 40,
+            "t": ".eslint-plugin-local"
+          }
+        ],
+        "title": "GitHub - microsoft/vscode: Visual Studio Code · GitHub",
+        "url": "https://github.com/microsoft/vscode",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": 4,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-github-desktop-menu.png"
+    },
+    {
+      "name": "stripe-desktop",
+      "url": "https://stripe.com/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pass": [
+        "G1: no mass ellipsis",
+        "G4: no short-heading vertical squeeze",
+        "G3: mode toggle 双→单 ok",
+        "S5: stripe zh locale → skip (expected)"
+      ],
+      "fail": [],
+      "notes": [
+        {
+          "t": 4,
+          "hosts": 0,
+          "trs": 0,
+          "ok": 0,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Browserbase 使用 Stripe 为其 AI 智能",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+              "w": 327,
+              "h": 547
+            }
+          ],
+          "fileRows": [],
+          "title": "Stripe | 金融基础设施，托举营收增长",
+          "url": "https://stripe.com/zh-us",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 8,
+          "hosts": 0,
+          "trs": 0,
+          "ok": 0,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Browserbase 使用 Stripe 为其 AI 智能",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+              "w": 327,
+              "h": 547
+            }
+          ],
+          "fileRows": [],
+          "title": "Stripe | 金融基础设施，托举营收增长",
+          "url": "https://stripe.com/zh-us",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "t": 12,
+          "hosts": 0,
+          "trs": 0,
+          "ok": 0,
+          "fail": 0,
+          "skip": 0,
+          "pending": 0,
+          "ellipsisHosts": 0,
+          "sampleTr": [],
+          "historyBox": null,
+          "squeezed": [],
+          "chipLike": [
+            {
+              "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Browserbase 使用 Stripe 为其 AI 智能",
+              "w": 327,
+              "h": 547
+            },
+            {
+              "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+              "w": 327,
+              "h": 547
+            }
+          ],
+          "fileRows": [],
+          "title": "Stripe | 金融基础设施，托举营收增长",
+          "url": "https://stripe.com/zh-us",
+          "fab": {
+            "orb": "原",
+            "mode": "隐",
+            "modeDisplay": "block"
+          }
+        },
+        {
+          "g3": {
+            "toSingle": {
+              "ok": true,
+              "before": "隐",
+              "after": "显"
+            },
+            "dup": {
+              "dups": 0,
+              "visibleTr": 0,
+              "mode": "显"
+            },
+            "afterOk": 0
+          }
+        },
+        "Stripe served zh-CN locale (hero already Chinese); extension correctly found 0 English hosts — not a translate engine failure."
+      ],
+      "watchSec": 12,
+      "final": {
+        "hosts": 0,
+        "trs": 0,
+        "ok": 0,
+        "fail": 0,
+        "skip": 0,
+        "pending": 0,
+        "ellipsisHosts": 0,
+        "sampleTr": [],
+        "historyBox": null,
+        "squeezed": [],
+        "chipLike": [
+          {
+            "t": "Lovable 借助 Stripe 成长为“氛围编程”领域的",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "借助 Stripe，Gamma 的年度经常性收入增长至 US",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "Runway 使用 Stripe 的无代码解决方案，为开发人",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "Supabase 借助 Stripe，将其后端即服务 (Ba",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "Linear 与 Stripe 合作，处理计费和支付。阅读 ",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "ElevenLabs 在 Stripe 的助力下，成长为价值",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "Browserbase 使用 Stripe 为其 AI 智能",
+            "w": 327,
+            "h": 547
+          },
+          {
+            "t": "Decagon 通过集成 Stripe 的智能体，将客服成本",
+            "w": 327,
+            "h": 547
+          }
+        ],
+        "fileRows": [],
+        "title": "Stripe | 金融基础设施，托举营收增长",
+        "url": "https://stripe.com/zh-us",
+        "fab": {
+          "orb": "原",
+          "mode": "隐",
+          "modeDisplay": "block"
+        }
+      },
+      "firstOkAt": null,
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-desktop.png",
+      "fail_raw": [
+        "G1: no translation within 8s",
+        "G1: zero ok segments"
+      ],
+      "disposition": "expected-skip-locale"
+    },
+    {
+      "name": "stripe-desktop-retry",
+      "url": "https://stripe.com/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pass": [
+        "S5: stripe zh locale → skip (expected)"
+      ],
+      "fail": [],
+      "firstOkAt": null,
+      "final": {
+        "ok": 0,
+        "fail": 0,
+        "hosts": 0,
+        "sample": [],
+        "title": "Stripe | 金融基础设施，托举营收增长",
+        "bodyStart": "产品 解决方案 开发者 资源 定价 登录 登录 联系销售 Stripe 承载的全球 GDP 份额： 1.71493453% 1.71493454% 金融基础设施，托举营收增长。无论您是刚刚起步，还是已达百亿规模，我们帮助您在全球范围内接受付"
+      },
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-desktop-retry.png",
+      "notes": [
+        "retry/fallback",
+        "Stripe served zh-CN locale (hero already Chinese); extension correctly found 0 English hosts — not a translate engine failure."
+      ],
+      "fail_raw": [
+        "G1: zero ok"
+      ],
+      "disposition": "expected-skip-locale"
+    },
+    {
+      "name": "apple-mba-desktop",
+      "url": "https://www.apple.com/macbook-air/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "pass": [
+        "G1: 74 ok",
+        "G1: first ok ~2s"
+      ],
+      "fail": [],
+      "firstOkAt": 2,
+      "final": {
+        "ok": 74,
+        "fail": 0,
+        "hosts": 74,
+        "sample": [
+          "限时优惠，购买 MacBook Air 并享受教育优惠，即可获赠 $100 礼品",
+          "购买 MacBook Air，教育优惠价 $1199 起。* 立即选购",
+          "MacBook Air"
+        ],
+        "title": "MacBook Air 13-inch and MacBook Air 15-inch - Apple",
+        "bodyStart": "Apple Store Mac iPad iPhone Watch Vision AirPods TV & Home Entertainment Accessories Support 0 + MacBook Air Overview Te"
+      },
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-apple-mba-desktop.png",
+      "notes": [
+        "retry/fallback"
+      ]
+    },
+    {
+      "name": "apple-mba-mobile",
+      "url": "https://www.apple.com/macbook-air/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "pass": [
+        "G1: 74 ok",
+        "G1: first ok ~2s"
+      ],
+      "fail": [],
+      "firstOkAt": 2,
+      "final": {
+        "ok": 74,
+        "fail": 0,
+        "hosts": 74,
+        "sample": [
+          "限时优惠，使用教育优惠购买 MacBook Air 即可获赠 $100 礼品卡Δ",
+          "使用教育优惠购买 MacBook Air，起售价 $1199。* 立即选购",
+          "MacBook Air"
+        ],
+        "title": "MacBook Air 13-inch and MacBook Air 15-inch - Apple",
+        "bodyStart": "Apple 0 + MacBook Air Local Nav Open Menu Buy MacBook Air For a limited time, get a $100 gift cardΔ when you buy MacBoo"
+      },
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-apple-mba-mobile.png",
+      "notes": [
+        "retry/fallback"
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "name": "wiki-mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "passN": 6,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 2,
+      "ok": 48,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "为实现目标而制定行动计划",
+        "目标设定涉及制定一份行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+        "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是因为他们拥有不",
+        "困难而具体的目标会带来显著高于简单目标、无目标，甚至设定诸如敦促人们尽力而为这类抽象目标的表现。"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-wiki-mobile.png"
+    },
+    {
+      "name": "google-mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "passN": 6,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 1,
+      "ok": 5,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "Ookla 出品的 Speedtest - 全球宽带速度测试",
+        "隐私政策",
+        "关于",
+        "Speedtest.net 桌面应用"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-google-mobile.png"
+    },
+    {
+      "name": "github-mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "passN": 7,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 3,
+      "ok": 10,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "哎呀！",
+        "加载时出错。请重新加载此页面。",
+        "通知 您必须登录才能更改通知设置"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-github-mobile.png"
+    },
+    {
+      "name": "cloudflare-blog-mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "passN": 5,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 2,
+      "ok": 38,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "Cloudflare CASB 推出自动修复策略",
+        "Cloudflare CASB 策略引入了一个原生自动化引擎，直接构建在 Cloudflare ",
+        "1.1.1.1 现已支持后量子 DNSSEC，全部 2,420 字节",
+        "1.1.1.1 现已使用 NIST 的后量子 ML-DSA-44 算法验证 DNSSEC 签名。"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-cloudflare-blog-mobile.png"
+    },
+    {
+      "name": "stripe-mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "passN": 5,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 1,
+      "ok": 1,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "2025 年，Stripe 上的企业创造了 1.9 万亿美元的价值。"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-mobile.png"
+    },
+    {
+      "name": "wiki-desktop",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "passN": 6,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 3,
+      "ok": 47,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "制定行动计划以实现目标",
+        "目标设定涉及制定一项行动计划，旨在激励和引导个人或群体朝着某个目标前进。[1] 目标比愿望和一时",
+        "洛克及其同事的理论指出，对为什么有些人比其他人表现更好，最简单、最直接的动机解释是：他们拥有不同",
+        "困难的特定目标会带来显著高于容易目标、没有目标、甚至设定诸如敦促人们尽力而为这类抽象目标时的绩效"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-wiki-desktop.png"
+    },
+    {
+      "name": "github-desktop-menu",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "passN": 8,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 4,
+      "ok": 39,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [
+        "哎呀！",
+        "加载时出错。请重新加载此页面。",
+        "通知 你必须登录才能更改通知设置",
+        "会话：简化仓库选择 (#335358)"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-github-desktop-menu.png"
+    },
+    {
+      "name": "stripe-desktop",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "passN": 3,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": null,
+      "ok": 0,
+      "failCount": 0,
+      "skip": 0,
+      "sampleTr": [],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-desktop.png",
+      "fail_raw": [
+        "G1: no translation within 8s",
+        "G1: zero ok segments"
+      ],
+      "disposition": "expected-skip-locale"
+    },
+    {
+      "name": "stripe-desktop-retry",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "passN": 0,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": null,
+      "ok": 0,
+      "failCount": 0,
+      "sampleTr": [],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-desktop-retry.png",
+      "fail_raw": [
+        "G1: zero ok"
+      ],
+      "disposition": "expected-skip-locale"
+    },
+    {
+      "name": "apple-mba-desktop",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "passN": 2,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 2,
+      "ok": 74,
+      "failCount": 0,
+      "sampleTr": [
+        "限时优惠，购买 MacBook Air 并享受教育优惠，即可获赠 $100 礼品",
+        "购买 MacBook Air，教育优惠价 $1199 起。* 立即选购",
+        "MacBook Air"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-apple-mba-desktop.png"
+    },
+    {
+      "name": "apple-mba-mobile",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "passN": 2,
+      "failN": 0,
+      "fail": [],
+      "firstOkAt": 2,
+      "ok": 74,
+      "failCount": 0,
+      "sampleTr": [
+        "限时优惠，使用教育优惠购买 MacBook Air 即可获赠 $100 礼品卡Δ",
+        "使用教育优惠购买 MacBook Air，起售价 $1199。* 立即选购",
+        "MacBook Air"
+      ],
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-apple-mba-mobile.png"
+    }
+  ],
+  "observedVersionAtEnd": "1.4.11",
+  "retries": [
+    {
+      "name": "stripe-desktop-retry",
+      "url": "https://stripe.com/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "firstOkAt": null,
+      "final": {
+        "ok": 0,
+        "fail": 0,
+        "hosts": 0,
+        "sample": [],
+        "title": "Stripe | 金融基础设施，托举营收增长",
+        "bodyStart": "产品 解决方案 开发者 资源 定价 登录 登录 联系销售 Stripe 承载的全球 GDP 份额： 1.71493453% 1.71493454% 金融基础设施，托举营收增长。无论您是刚刚起步，还是已达百亿规模，我们帮助您在全球范围内接受付"
+      },
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-stripe-desktop-retry.png"
+    },
+    {
+      "name": "apple-mba-desktop",
+      "url": "https://www.apple.com/macbook-air/",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "firstOkAt": 2,
+      "final": {
+        "ok": 74,
+        "fail": 0,
+        "hosts": 74,
+        "sample": [
+          "限时优惠，购买 MacBook Air 并享受教育优惠，即可获赠 $100 礼品",
+          "购买 MacBook Air，教育优惠价 $1199 起。* 立即选购",
+          "MacBook Air"
+        ],
+        "title": "MacBook Air 13-inch and MacBook Air 15-inch - Apple",
+        "bodyStart": "Apple Store Mac iPad iPhone Watch Vision AirPods TV & Home Entertainment Accessories Support 0 + MacBook Air Overview Te"
+      },
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-apple-mba-desktop.png"
+    },
+    {
+      "name": "apple-mba-mobile",
+      "url": "https://www.apple.com/macbook-air/",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "firstOkAt": 2,
+      "final": {
+        "ok": 74,
+        "fail": 0,
+        "hosts": 74,
+        "sample": [
+          "限时优惠，使用教育优惠购买 MacBook Air 即可获赠 $100 礼品卡Δ",
+          "使用教育优惠购买 MacBook Air，起售价 $1199。* 立即选购",
+          "MacBook Air"
+        ],
+        "title": "MacBook Air 13-inch and MacBook Air 15-inch - Apple",
+        "bodyStart": "Apple 0 + MacBook Air Local Nav Open Menu Buy MacBook Air For a limited time, get a $100 gift cardΔ when you buy MacBoo"
+      },
+      "shot": "/Users/sparrow/page-bilingual/accept-shots/matrix148-apple-mba-mobile.png"
+    }
+  ],
+  "conclusion": {
+    "steeringExpected": "1.4.8",
+    "observed": "1.4.11",
+    "versionMismatch": true,
+    "hardFails": [],
+    "notes": [
+      "First page check: loaded version was NOT 1.4.8 (initially 1.4.10, ended 1.4.11) — continued matrix without blocking on resume/version drift.",
+      "Wiki / Google / Cloudflare blog / Apple MBA: progressive translate OK, 0 fail counters.",
+      "GitHub pages showed site error banners (translated) but layout checks passed.",
+      "stripe.com desktop resolved to Chinese UI → 0 English hosts (expected skip). Mobile stripe had 1 English fragment."
+    ]
+  }
+}
