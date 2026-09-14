@@ -46,6 +46,9 @@
   const cache = new Map();
   let settings = { ...PBT.DEFAULTS, displayMode: "replace", scope: "full" };
   let glossary = [];
+  /** Global proper-noun whitelist (chrome.storage.local); complements page glossary. */
+  let properNounStore = { seeded: false, terms: {} };
+  let properNounList = [];
   let translated = false;
   let translating = false; // run in progress; FAB 译→原 only after first ok
   let hoverEl = null;
@@ -85,6 +88,7 @@
     settings = s;
     applyStyle();
     glossary = await loadGlossary();
+    await loadProperNouns();
     await loadTrCache();
     mountUi();
     // 全局翻译开关：新页面自动开译
@@ -103,10 +107,13 @@
   });
   chrome.storage.onChanged.addListener((chg, area) => {
     if (area !== "local") return;
+    if (Object.prototype.hasOwnProperty.call(chg, PBT.PN_STORE_KEY)) {
+      applyProperNounStore(chg[PBT.PN_STORE_KEY].newValue);
+    }
     const langChanged = Object.prototype.hasOwnProperty.call(chg, "targetLang");
     const serviceChanged = Object.prototype.hasOwnProperty.call(chg, "serviceOn");
     for (const [k, v] of Object.entries(chg)) {
-      if (PBT.SECRET_KEYS.includes(k)) continue;
+      if (PBT.SECRET_KEYS.includes(k) || k === PBT.PN_STORE_KEY) continue;
       settings[k] = v.newValue;
     }
     applyStyle();
@@ -461,6 +468,64 @@
     } catch {
       /* session storage optional */
     }
+  }
+
+  function applyProperNounStore(raw) {
+    properNounStore = PBT.pnEnsureStore(raw);
+    properNounList = PBT.pnTermList(properNounStore);
+  }
+
+  async function loadProperNouns() {
+    try {
+      properNounStore = await PBT.pnLoad();
+      properNounList = PBT.pnTermList(properNounStore);
+    } catch {
+      applyProperNounStore(null);
+    }
+  }
+
+  function touchProperNounsInText(text) {
+    const s = String(text || "");
+    if (!s || !properNounList.length) return false;
+    let touched = false;
+    const now = Date.now();
+    for (const term of properNounList) {
+      const key = PBT.pnNormKey(term);
+      const entry = properNounStore.terms[key];
+      if (!entry) continue;
+      const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
+      if (re.test(s)) {
+        entry.lastAt = now;
+        touched = true;
+      }
+    }
+    return touched;
+  }
+
+  async function persistProperNounsSoon() {
+    try {
+      await PBT.pnSave(properNounStore);
+    } catch {
+      /* local optional */
+    }
+  }
+
+  /** Glossary rows for the API: page pins + identity rows for whitelist terms present in the batch. */
+  function glossaryWithProperNouns(batchTexts) {
+    const out = glossary.map((g) => ({ src: g.src, dst: g.dst }));
+    const seen = new Set(out.map((g) => PBT.pnNormKey(g.src)));
+    const blob = (batchTexts || []).join("\n");
+    for (const term of properNounList) {
+      const key = PBT.pnNormKey(term);
+      if (!key || seen.has(key)) continue;
+      const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
+      if (!re.test(blob)) continue;
+      out.push({ src: term, dst: term });
+      seen.add(key);
+    }
+    return out;
   }
 
   /* Global segment cache — LFU-lite (one-hit probation + light aging).
@@ -1111,12 +1176,15 @@
   /**
    * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
    * true → 应 skip attach（markSkip same-lang）。
+   * 白名单专名（Windows / Omarchy 等）不计入拉丁词集；与 Han 目标脚本门（PR #4）互补。
    */
   function nearEchoOverlap(src, dst) {
     // 保留 Omarchy / Windows 等专名的中译，词集覆盖率会误判成回声 → 先放行
     if (carriesTargetScript(src, dst)) return false;
-    const s = String(src || "").trim().toLowerCase();
-    const d = String(dst || "").trim().toLowerCase();
+    const s0 = PBT.pnStripForEcho(src, properNounList);
+    const d0 = PBT.pnStripForEcho(dst, properNounList);
+    const s = String(s0 || "").trim().toLowerCase();
+    const d = String(d0 || "").trim().toLowerCase();
     if (!s || !d) return false;
     if (s.length >= 8 && d.length >= 8) {
       if (s.includes(d) || d.includes(s)) {
@@ -3291,11 +3359,18 @@
     }
     if (have.length) schedulePersistTrCache();
     if (!need.length) return have;
+    let touchedPn = false;
+    for (const it of need) {
+      if (touchProperNounsInText(it.text)) touchedPn = true;
+    }
+    if (touchedPn) persistProperNounsSoon();
+    const gloss = glossaryWithProperNouns(need.map((x) => x.text));
     const res = await runtimeSend({
       type: "PBT_BATCH",
       items: need.map(({ id, text }) => ({ id, text })),
       targetLang: settings.targetLang,
-      glossary,
+      glossary: gloss,
+      properNouns: properNounList,
       page: pageContext(),
     }, 100000);
     if (!res?.ok) throw new Error(res?.error || "Translation failed");
@@ -3303,7 +3378,9 @@
     for (const row of res.items || []) {
       const src = need.find((b) => b.id === row.id);
       if (src && typeof row.text === "string" && row.text && row.text !== "…") {
-        cachePut(cacheKey(src.text), row.text);
+        const text = restoreProperNouns(src.text, row.text);
+        row.text = text;
+        cachePut(cacheKey(src.text), text);
         wrote = true;
       }
     }
@@ -3312,6 +3389,24 @@
       schedulePersistTrCache();
     }
     return have.concat(res.items || []);
+  }
+
+  /**
+   * Normalize whitelist token spelling in the translation when the model kept the
+   * name but changed case (Windows → windows). Does not invent missing names.
+   */
+  function restoreProperNouns(src, dst) {
+    let out = String(dst ?? "");
+    const s = String(src || "");
+    if (!out || !s || !properNounList.length) return out;
+    for (const term of properNounList) {
+      const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const reSrc = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
+      if (!reSrc.test(s)) continue;
+      const reDst = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "gi");
+      if (reDst.test(out)) out = out.replace(reDst, term);
+    }
+    return out;
   }
 
   function inView(el, pad) {
@@ -4005,7 +4100,26 @@
     if (i >= 0) glossary[i] = { src, dst };
     else glossary.push({ src, dst });
     await persistGlossary();
+    // Identity pin also grows the durable proper-noun whitelist (keep-as-is).
+    if (PBT.pnNormKey(src) === PBT.pnNormKey(dst)) {
+      properNounStore = await PBT.pnAdd(src, { pinned: true });
+      properNounList = PBT.pnTermList(properNounStore);
+    }
     toast(`已固定术语：${src} → ${dst}`);
+    if (lastSel.host) retryOne(lastSel.host);
+  }
+
+  /** Selection → keep as-is forever (durable whitelist, not page glossary). */
+  async function pinProperNoun() {
+    if (!lastSel?.text) return;
+    const src = PBT.pnSanitizeTerm(lastSel.text.slice(0, 64));
+    if (!src) {
+      toast("专名过长或无效", true);
+      return;
+    }
+    properNounStore = await PBT.pnAdd(src, { pinned: true });
+    properNounList = PBT.pnTermList(properNounStore);
+    toast(`已保留专名：${src}`);
     if (lastSel.host) retryOne(lastSel.host);
   }
 
@@ -4135,7 +4249,7 @@
           border: 1px solid #000;
         }
         .tip-text { white-space: pre-wrap; }
-        .tip-actions { margin-top: 6px; display: flex; gap: 6px; }
+        .tip-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
         .tip-actions button { padding: 4px 8px; border-radius: 6px; font-size: 12px; }
         .bubble { pointer-events: none; opacity: .92; font-size: 12px; padding: 4px 8px; }
       </style>
@@ -4145,7 +4259,10 @@
       <div class="toast" id="toast"></div>
       <div class="tip" id="tip">
         <div class="tip-text" id="tipText"></div>
-        <div class="tip-actions"><button type="button" id="pin">固定术语</button></div>
+        <div class="tip-actions">
+          <button type="button" id="pin">固定术语</button>
+          <button type="button" id="pinPn">保留专名</button>
+        </div>
       </div>
       <div class="bubble" id="bubble"></div>
     `;
@@ -4179,6 +4296,10 @@
     shadow.getElementById("pin").addEventListener("click", (e) => {
       e.preventDefault();
       pinTerm();
+    });
+    shadow.getElementById("pinPn").addEventListener("click", (e) => {
+      e.preventDefault();
+      pinProperNoun();
     });
     renderFab();
   }
@@ -4354,7 +4475,10 @@
     mountUi();
     const el = ui.shadow.getElementById("tip");
     ui.shadow.getElementById("tipText").textContent = text;
-    ui.shadow.getElementById("pin").style.display = pinable ? "inline-block" : "none";
+    const show = pinable ? "inline-block" : "none";
+    ui.shadow.getElementById("pin").style.display = show;
+    const pinPn = ui.shadow.getElementById("pinPn");
+    if (pinPn) pinPn.style.display = show;
     el.style.display = "block";
     el.style.top = `${Math.min(window.innerHeight - 12, rect.bottom + 8)}px`;
     el.style.left = `${Math.min(window.innerWidth - 24, Math.max(8, rect.left))}px`;

@@ -97,6 +97,17 @@
       <label for="excludeCss">额外跳过选择器</label>
       <input id="excludeCss" type="text" placeholder=".my-widget, #promo" />
 
+      <label>专有名词白名单</label>
+      <p class="hint">这些词翻译时原样保留（Windows、GitHub、Omarchy…）。与页内划词「保留专名」共用同一列表，存在本地，上限约 400。</p>
+      <div id="pnBox" style="border:1px solid #d1d5db;border-radius:8px;padding:8px;max-height:180px;overflow:auto;background:#fafafa;margin-bottom:8px">
+        <div id="pnList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="pnAdd" type="text" placeholder="添加专名，如 Omarchy" style="flex:1;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font:inherit" />
+        <button id="pnAddBtn" type="button" style="margin-top:0">添加</button>
+      </div>
+      <p class="hint" id="pnCount"></p>
+
       <label class="check"><input type="checkbox" id="hoverEnabled" /> 悬停气泡（需按修饰键）</label>
       <label for="hoverKey">悬停修饰键</label>
       <select id="hoverKey">
