@@ -970,10 +970,6 @@
   }
 
 
-  /**
-   * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
-   * true → 应 skip attach（markSkip same-lang）。
-   */
   /** 译文带来了原文没有的目标语脚本 → 真译文，保留几个专名也不算回声 */
   function carriesTargetScript(src, dst) {
     const lang = String(settings.targetLang || "zh-CN");
@@ -984,6 +980,10 @@
     return false;
   }
 
+  /**
+   * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
+   * true → 应 skip attach（markSkip same-lang）。
+   */
   function nearEchoOverlap(src, dst) {
     // 保留 Omarchy / Windows 等专名的中译，词集覆盖率会误判成回声 → 先放行
     if (carriesTargetScript(src, dst)) return false;
