@@ -802,7 +802,7 @@
     const text = textOf(el);
     if (!needsTranslate(text) || text.length < 2 || text.length > 200) return false;
     if (el.querySelector?.(BLOCKS)) return false;
-    if (looksLikeUrl(text) || looksLikeIdentifier(text)) return false;
+    if (looksLikeUrl(text) || looksLikeEmail(text) || looksLikeIdentifier(text)) return false;
     return true;
   }
 
@@ -823,7 +823,7 @@
     const maxLen = inPopup ? 160 : 120;
     if (!needsTranslate(text) || text.length < minLen || text.length > maxLen) return false;
     if (el.querySelector?.(BLOCKS)) return false;
-    if (looksLikeUrl(text) || looksLikeIdentifier(text)) return false;
+    if (looksLikeUrl(text) || looksLikeEmail(text) || looksLikeIdentifier(text)) return false;
     return true;
   }
 
@@ -1176,12 +1176,37 @@
   }
 
 
-  /** 译文带来了原文没有的目标语脚本 → 真译文，保留几个专名也不算回声 */
+  /** 统计目标语脚本字符数（汉/假名/韩文） */
+  function targetScriptCount(text, lang) {
+    const t = String(text || "");
+    if (/^zh\b/i.test(lang)) return (t.match(/[\u4e00-\u9fff]/g) || []).length;
+    if (/^ja\b/i.test(lang)) return (t.match(/[\u3040-\u30ff]/g) || []).length;
+    if (/^ko\b/i.test(lang)) return (t.match(/[\uac00-\ud7af]/g) || []).length;
+    if (/^en\b/i.test(lang)) return (t.match(/[A-Za-z\u00C0-\u024F]/g) || []).length;
+    return 0;
+  }
+
+  /**
+   * 译文带来了原文没有的目标语脚本 → 真译文，绝不当回声。
+   * 专名/年份留拉丁时 hanRatio 可低至 ~0.15；用「绝对字数 OR 比例」双门槛。
+   */
   function carriesTargetScript(src, dst) {
     const lang = String(settings.targetLang || "zh-CN");
-    if (/^zh\b/i.test(lang)) return hanRatio(dst) >= 0.2 && hanRatio(src) < 0.1;
-    if (/^ja\b/i.test(lang)) return /[\u3040-\u30ff]/.test(dst) && !/[\u3040-\u30ff]/.test(src);
-    if (/^ko\b/i.test(lang)) return /[\uac00-\ud7af]/.test(dst) && !/[\uac00-\ud7af]/.test(src);
+    if (/^zh\b/i.test(lang)) {
+      if (hanRatio(src) >= 0.1) return false;
+      const han = targetScriptCount(dst, lang);
+      // ≥2 汉字且原文几乎无汉 → 真中译（含 Neovim/VSCode 堆专名的短句）
+      if (han >= 2) return true;
+      return hanRatio(dst) >= 0.15;
+    }
+    if (/^ja\b/i.test(lang)) {
+      const n = targetScriptCount(dst, lang);
+      return n >= 2 && targetScriptCount(src, lang) === 0;
+    }
+    if (/^ko\b/i.test(lang)) {
+      const n = targetScriptCount(dst, lang);
+      return n >= 2 && targetScriptCount(src, lang) === 0;
+    }
     if (/^en\b/i.test(lang)) return looksAlreadyEnglish(dst) && !looksAlreadyEnglish(src);
     return false;
   }
@@ -1189,11 +1214,14 @@
   /**
    * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
    * true → 应 skip attach（markSkip same-lang）。
-   * 白名单品牌 / 启发式人名不计入拉丁词集；与 Han 目标脚本门（PR #4）互补，
+   * 白名单品牌 / 启发式人名不计入拉丁词集；与 Han 目标脚本门互补，
    * 避免「中文 + Tim Cook / Nike」被当成回声丢掉。
+   *
+   * 禁止用 min(|src|,|dst|) 做覆盖率：中译保留专名时 dst Latin ⊂ src Latin，
+   * inter/min → 1.0，会把正确译文当回声丢掉（维基人名/年份尤甚）。
    */
   function nearEchoOverlap(src, dst) {
-    // 保留 Omarchy / Windows / 人名品牌的中译，词集覆盖率会误判成回声 → 先放行
+    // 目标语脚本门：有实质汉/假名/韩文则永不判回声；人名品牌经 pnStripForEcho 剥离
     if (carriesTargetScript(src, dst)) return false;
     const keep = preserveTermsForPair(src, dst);
     const s0 = PBT.pnStripForEcho(src, keep);
@@ -1216,9 +1244,8 @@
       let inter = 0;
       for (const w of setD) if (setS.has(w)) inter += 1;
       const uni = setS.size + setD.size - inter;
+      // 仅 Jaccard：子集专名不会抬到阈值；真英译英两边词集接近才会命中
       if (uni && inter / uni >= 0.82) return true;
-      const cover = inter / Math.min(setS.size, setD.size);
-      if (cover >= 0.9) return true;
     }
     const sn = s.replace(/\s+/g, "");
     const dn = d.replace(/\s+/g, "");
@@ -1232,7 +1259,8 @@
       const gd = grams(dn);
       let inter = 0;
       for (const g of gd) if (gs.has(g)) inter += 1;
-      const denom = Math.min(gs.size, gd.size);
+      // 用 max 分母，避免短 dst 被 min 抬成伪高覆盖
+      const denom = Math.max(gs.size, gd.size);
       if (denom && inter / denom >= 0.85) {
         const lenRatio = Math.min(sn.length, dn.length) / Math.max(sn.length, dn.length);
         if (lenRatio >= 0.7) return true;
@@ -1392,15 +1420,60 @@
     return false;
   }
 
+  function looksLikeEmail(text) {
+    const t = String(text || "").trim();
+    if (!t || t.length > 120 || /\s/.test(t)) return false;
+    return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(t);
+  }
+
+  function looksLikeFilePath(text) {
+    const t = String(text || "").trim();
+    if (!t || t.length > 160) return false;
+    if (/\s/.test(t) && !/^[A-Za-z0-9._-]+\s*\/\s*[A-Za-z0-9._-]+$/.test(t)) return false;
+    if (/^(~\/|\.\/|\.\.\/|\/)[\w./@+-]+$/.test(t)) return true;
+    if (/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\/?$/.test(t)) return true; // a/b, agents/skills
+    if (/\.(js|ts|tsx|jsx|mjs|cjs|json|md|txt|yml|yaml|toml|lock|css|html|svg|png|sh|py|rb|go|rs|conf|cfg)$/i.test(t) && !/\s/.test(t)) {
+      return true;
+    }
+    return false;
+  }
+
   function looksLikeIdentifier(text) {
     const t = String(text || "").trim();
     if (!t || t.length > 64) return false;
+    if (looksLikeEmail(t)) return true;
+    if (looksLikeFilePath(t)) return true;
+    // owner / repo（含「omacom / omarchy」带空格）
+    if (/^[A-Za-z0-9._-]+\s*\/\s*[A-Za-z0-9._-]+$/.test(t)) return true;
+    // 几乎只会出现在仓库文件树的路径段（整宿主=此词才跳；勿误伤导航文案 Plugins/Themes）
+    if (/^(bin|lib|src|dist|build|node_modules|vendor|__pycache__|\.github|\.gitlab|\.vscode|\.idea)$/i.test(t)) {
+      return true;
+    }
     if (/^[\w.-]+\/[\w.-]+$/.test(t)) return true; // owner/repo
     if (/^@?[A-Za-z][\w-]{0,38}$/.test(t) && !/^(Public|Private|Open|Closed|Code|Issues|Pull|About)$/i.test(t)) {
       // bare handle / single token — skip translating usernames
-      if (!/\s/.test(t) && !/^(Who|What|Why|How|The|Our|Home)$/i.test(t)) return /^[A-Za-z0-9][\w-]{2,}$/.test(t) && /\d/.test(t) || /^[a-z]+[0-9]+/i.test(t) || /^[a-z]+_[a-z0-9]+$/i.test(t);
+      if (!/\s/.test(t) && !/^(Who|What|Why|How|The|Our|Home)$/i.test(t)) {
+        return (
+          (/^[A-Za-z0-9][\w-]{2,}$/.test(t) && /\d/.test(t)) ||
+          /^[a-z]+[0-9]+/i.test(t) ||
+          /^[a-z]+_[a-z0-9]+$/i.test(t)
+        );
+      }
     }
     return false;
+  }
+
+  /** 多段路径/邮箱拼成一个宿主（文件列表被收到 ul 上）时整段跳过 */
+  function looksLikeIdentifierBlob(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    if (looksLikeIdentifier(t)) return true;
+    const normalized = t.replace(/\s*\/\s*/g, "/");
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    if (parts.length < 2 || parts.length > 16) return false;
+    return parts.every(
+      (p) => looksLikeEmail(p) || looksLikeFilePath(p) || looksLikeIdentifier(p) || /^[A-Za-z0-9._+-]{1,40}$/.test(p)
+    );
   }
 
   /** Google/Bing 等结果标题：链上 h3，after 易叠字 */
@@ -1418,7 +1491,7 @@
     return false;
   }
 
-  /** GitHub 文件树/路径名不译 */
+  /** GitHub 文件树/路径名/分支名不译 */
   function isRepoFileLabel(el, text) {
     const host = location.hostname || "";
     if (!/github\.com$/i.test(host) && !/gitlab\./i.test(host)) return false;
@@ -1611,8 +1684,9 @@
     // Google「翻译此页」等浏览器 chrome
     if (/翻译此页|Translate this page|Translate to\b/i.test(text)) return false;
     if (looksLikeUrl(text)) return false;
+    if (looksLikeEmail(text)) return false;
     if (looksLikeRelativeTime(text)) return false;
-    if (looksLikeIdentifier(text)) return false;
+    if (looksLikeIdentifier(text) || looksLikeIdentifierBlob(text)) return false;
     if (el.tagName === "CITE") return false;
     if (el.closest?.("relative-time,time-ago,time,[datetime]")) return false;
     // 芯片仍跳；replace 模式大幅放宽 fragile/tightClip（无双语兄弟，布局风险低）
@@ -1966,7 +2040,7 @@
         const text = textOf(el);
         const minLen = hero ? 8 : (isReplaceFull() ? 6 : 12);
         if (!needsTranslate(text) || text.length < minLen || text.length > 200) continue;
-        if (looksLikeUrl(text) || isConsentWall(el)) continue;
+        if (looksLikeUrl(text) || looksLikeEmail(text) || looksLikeIdentifier(text) || looksLikeIdentifierBlob(text) || isConsentWall(el)) continue;
         if (!isEffectivelyVisible(el)) continue;
         try {
           const r = el.getBoundingClientRect();
@@ -2053,8 +2127,14 @@
             needsTranslate(pText);
         } catch { useParent = false; }
         if (useParent) {
+          const pText = textOf(parent);
+          // 文件列表短叶合并到 ul 后会变成「bin agents/skills …」整段误译 → 直接丢弃
+          if (looksLikeIdentifier(pText) || looksLikeIdentifierBlob(pText)) {
+            for (const g of group) skip.add(g.el);
+            continue;
+          }
           parent.dataset.pbtRole = parent.dataset.pbtRole || "prose";
-          out.push({ el: parent, text: textOf(parent) });
+          out.push({ el: parent, text: pText });
           for (const g of group) skip.add(g.el);
           continue;
         }
@@ -2627,13 +2707,72 @@
     });
   }
 
-  /** Put the full translation in one text node; clear sibling text so mixed inline stays one language. */
+  /** TOC 序号、chevron、纯标点：换字时原样保留，避免导航几何被掏空 */
+  function isChromeText(text) {
+    const t = String(text || "").trim();
+    if (!t) return true;
+    if (/^[›»><▸▹▾▿▼▲►◀·•\|│¦\-\u2013\u2014\u00b7、]+$/.test(t)) return true;
+    if (/^\d{1,3}([.\-]\d+){0,4}\.?$/.test(t)) return true;
+    if (t.length <= 2 && !/[A-Za-z\u00C0-\u024F\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(t)) return true;
+    return false;
+  }
+
+  /** 按原文各文本节点长度比例，把译文码点分配回去（保链接/加粗结构，勿整段灌进 node#0） */
+  function distributeAcrossTextNodes(nodes, translatedText) {
+    const chars = Array.from(String(translatedText || ""));
+    if (!nodes.length) return;
+    if (nodes.length === 1 || chars.length === 0) {
+      nodes[0].textContent = translatedText;
+      return;
+    }
+    const weights = nodes.map((n) => Math.max(1, Array.from(String(n.textContent || "").trim()).length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let offset = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      if (i === nodes.length - 1) {
+        nodes[i].textContent = chars.slice(offset).join("");
+        break;
+      }
+      const ideal = Math.round((chars.length * weights[i]) / total);
+      const maxShare = Math.max(1, chars.length - offset - (nodes.length - i - 1));
+      const share = Math.min(Math.max(1, ideal), maxShare);
+      nodes[i].textContent = chars.slice(offset, offset + share).join("");
+      offset += share;
+    }
+  }
+
+  /** Put the full translation into host text nodes without blanking siblings / nuking TOC & links. */
   function swapHostTexts(el, translatedText) {
     const nodes = hostTextNodes(el);
     if (!nodes.length) return false;
     if (!hostTextSnaps.has(el)) hostTextSnaps.set(el, nodes.map((n) => ({ n, t: n.textContent })));
-    const k = swapTargetIndex(el, nodes);
-    for (let i = 0; i < nodes.length; i++) nodes[i].textContent = i === k ? translatedText : "";
+
+    const content = [];
+    for (const n of nodes) {
+      if (isChromeText(n.textContent)) continue; // leave chevrons / toc numbers
+      content.push(n);
+    }
+    const targets = content.length ? content : nodes;
+
+    if (targets.length === 1) {
+      // 单内容节点：整段写入；若它在链接内且另有非交互节点，swapTargetIndex 已无其它可选
+      const only = targets[0];
+      const all = nodes;
+      if (all.length > 1 && inInlineInteractive(el, only)) {
+        const k = swapTargetIndex(el, all);
+        if (k >= 0 && !inInlineInteractive(el, all[k]) && !isChromeText(all[k].textContent)) {
+          all[k].textContent = translatedText;
+        } else {
+          only.textContent = translatedText;
+        }
+      } else {
+        only.textContent = translatedText;
+      }
+    } else {
+      // 多内容节点：按比例分配，保留 a/b/em 几何，避免整段变巨链/巨粗 + 兄弟被掏空
+      distributeAcrossTextNodes(targets, translatedText);
+    }
+
     hideDuplicateCode(el, translatedText);
     el.classList.add("pbt-text-swap");
     return true;
