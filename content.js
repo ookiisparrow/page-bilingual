@@ -970,11 +970,23 @@
   }
 
 
+  /** 译文带来了原文没有的目标语脚本 → 真译文，保留几个专名也不算回声 */
+  function carriesTargetScript(src, dst) {
+    const lang = String(settings.targetLang || "zh-CN");
+    if (/^zh\b/i.test(lang)) return hanRatio(dst) >= 0.2 && hanRatio(src) < 0.1;
+    if (/^ja\b/i.test(lang)) return /[\u3040-\u30ff]/.test(dst) && !/[\u3040-\u30ff]/.test(src);
+    if (/^ko\b/i.test(lang)) return /[\uac00-\ud7af]/.test(dst) && !/[\uac00-\ud7af]/.test(src);
+    if (/^en\b/i.test(lang)) return looksAlreadyEnglish(dst) && !looksAlreadyEnglish(src);
+    return false;
+  }
+
   /**
    * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
    * true → 应 skip attach（markSkip same-lang）。
    */
   function nearEchoOverlap(src, dst) {
+    // 保留 Omarchy / Windows 等专名的中译，词集覆盖率会误判成回声 → 先放行
+    if (carriesTargetScript(src, dst)) return false;
     const s = String(src || "").trim().toLowerCase();
     const d = String(dst || "").trim().toLowerCase();
     if (!s || !d) return false;
@@ -1056,6 +1068,50 @@
       }
     }
     return false;
+  }
+
+  /** 专名回声：短、无句读、词首大写/标识符 → 原文即正解，永久保留原文 */
+  function isProperNounEcho(src) {
+    const s = String(src || "").trim();
+    if (!s || s.length > 32) return false;
+    if (/[。！？；.!?;,，:：]/.test(s)) return false;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length > 4) return false;
+    return words.every((w) => /^[A-Z0-9]/.test(w) || /[A-Z0-9]{2,}/.test(w) || /[._/-]/.test(w));
+  }
+
+  /**
+   * 模型把原文照抄一份再附译文（「EN — ZH」/「EN（ZH）」/ 换行拼接）：只留译文段。
+   * 否则宿主会被写成英中混排，等同 replace 模式下的「上英下中」。
+   */
+  function stripSourceEcho(src, dst) {
+    const s = String(src || "").replace(/\s+/g, " ").trim();
+    let d = String(dst || "").trim();
+    if (!s || !d || s.length < 6) return dst;
+
+    const lines = d.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    if (lines.length > 1) {
+      const keep = lines.filter((ln) => !sameLanguageAsSource(s, ln));
+      if (keep.length && keep.length < lines.length) d = keep.join(" ");
+    }
+
+    const flat = d.replace(/\s+/g, " ").trim();
+    const lower = flat.toLowerCase();
+    const sl = s.toLowerCase();
+    let rest = "";
+    if (lower.startsWith(sl)) rest = flat.slice(s.length);
+    else if (lower.endsWith(sl)) rest = flat.slice(0, flat.length - s.length);
+    else return d;
+
+    rest = rest.replace(/^[\s—–\-−:：|·、,，.。/（(【\[]+/, "").replace(/[\s—–\-−:：|·、（(【\[)）\]】]+$/, "").trim();
+    if (!rest || rest.length < 2) return d;
+    if (sameLanguageAsSource(s, rest)) return d;
+    return rest;
+  }
+
+  /** 上屏前统一清洗：折叠重复 + 去英文回声段 */
+  function cleanTranslation(src, dst) {
+    return stripSourceEcho(src, collapseRepeatedTranslation(dst));
   }
 
   /** 强启发式：疑似整页已是目标语（空收集 toast） */
@@ -2263,13 +2319,58 @@
     return nodes;
   }
 
-  /** Put the full translation in the first text node; clear sibling text so mixed inline stays one language. */
+  /** 文本节点是否落在宿主内部的链接/按钮里（整段译文写进去会把整段变成可点） */
+  function inInlineInteractive(el, node) {
+    let p = node.parentElement;
+    while (p && p !== el) {
+      if (p.matches?.("a[href],button,[role='button'],summary,label")) return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  /** 承接整段译文的节点：优先非交互的最长节点，避免整段被包进内联链接 */
+  function swapTargetIndex(el, nodes) {
+    let best = -1;
+    let bestLen = -1;
+    for (let i = 0; i < nodes.length; i++) {
+      if (inInlineInteractive(el, nodes[i])) continue;
+      const len = nodes[i].textContent.trim().length;
+      if (len > bestLen) {
+        bestLen = len;
+        best = i;
+      }
+    }
+    return best >= 0 ? best : 0;
+  }
+
+  /** code/kbd 原样保留；若译文已含同一串，藏掉宿主里那份，别让命令重复出现两次 */
+  function hideDuplicateCode(el, translatedText) {
+    const t = String(translatedText || "");
+    el.querySelectorAll?.("code,kbd,samp").forEach((c) => {
+      const s = (c.textContent || "").trim();
+      if (s.length >= 3 && t.includes(s)) {
+        c.dataset.pbtEchoHidden = "1";
+        c.style.setProperty("display", "none", "important");
+      }
+    });
+  }
+
+  function showHiddenCode(el) {
+    el.querySelectorAll?.("[data-pbt-echo-hidden]").forEach((c) => {
+      c.style.removeProperty("display");
+      delete c.dataset.pbtEchoHidden;
+    });
+  }
+
+  /** Put the full translation in one text node; clear sibling text so mixed inline stays one language. */
   function swapHostTexts(el, translatedText) {
     const nodes = hostTextNodes(el);
     if (!nodes.length) return false;
     if (!hostTextSnaps.has(el)) hostTextSnaps.set(el, nodes.map((n) => ({ n, t: n.textContent })));
-    nodes[0].textContent = translatedText;
-    for (let i = 1; i < nodes.length; i++) nodes[i].textContent = "";
+    const k = swapTargetIndex(el, nodes);
+    for (let i = 0; i < nodes.length; i++) nodes[i].textContent = i === k ? translatedText : "";
+    hideDuplicateCode(el, translatedText);
     el.classList.add("pbt-text-swap");
     return true;
   }
@@ -2334,6 +2435,7 @@
 
   function restoreTextSwap(el) {
     if (el.dataset.pbtOrigText == null) return;
+    showHiddenCode(el);
     const snap = hostTextSnaps.get(el);
     if (snap) {
       for (const { n, t } of snap) {
@@ -2355,6 +2457,8 @@
   /** 弹出层：只换 Text，不插布局节点 */
   /** 始终 nextSibling 贴宿主；column-reverse 用 order 纠视觉反序；禁止标题竖排窄条 */
   function insertTrAfter(el, node) {
+    // replace 模式零双语条：任何路径都不得在宿主下方插英上中下
+    if (isReplaceMode()) return false;
     el.after(node);
     // 硬防竖排/逐字折行（Stripe hero 曾出现双列竖排）
     node.style.writingMode = "horizontal-tb";
@@ -2480,13 +2584,28 @@
     return false;
   }
 
+  /**
+   * 回声（译文≈原文）处理：专名保留原文、永不再插第二份英文；
+   * 其余算一次可重试的 fail，交给漏译扫描再打一轮，而不是永久 skip。
+   */
+  function echoSkip(el, srcText) {
+    const tries = Number(el.dataset.pbtEchoTries || 0) + 1;
+    el.dataset.pbtEchoTries = String(tries);
+    if (tries >= 2 || isProperNounEcho(srcText)) {
+      markSkip(el, "echo");
+      return "skip";
+    }
+    failBack(el, "echo-retry");
+    return "fail";
+  }
+
   function attach(el, translatedText, state) {
     if (!el || !el.isConnected) return "dead";
     if (isConsentWall(el)) return "skip";
-    translatedText = collapseRepeatedTranslation(translatedText);
-    if (state !== "fail" && state !== "pending" && sameLanguageAsSource(textOf(el), translatedText)) {
-      markSkip(el, "same-lang");
-      return "skip";
+    const srcText = el.dataset.pbtOrigText != null ? el.dataset.pbtOrigText : textOf(el);
+    translatedText = cleanTranslation(srcText, translatedText);
+    if (state !== "fail" && state !== "pending" && sameLanguageAsSource(srcText, translatedText)) {
+      return echoSkip(el, srcText);
     }
     // 已成功挂过且同文：禁止再叠一层 .pbt-tr
     if (el.dataset.pbtState === "ok" && el.dataset.pbtId && state === "ok") {
@@ -2530,8 +2649,8 @@
     if (isReplaceMode() && (isChipListItem(el) || isChipListItem(el.parentElement))) {
       return "skip";
     }
-    // 折叠短标题在横向 flex 行：禁止 after 抢宽；hero 长标题放行
-    if (isHeading(el)) {
+    // 折叠短标题在横向 flex 行：禁止 after 抢宽；hero 长标题放行。replace 不插节点，无需回避
+    if (!isReplaceMode() && isHeading(el)) {
       const p = el.parentElement;
       if (p) {
         try {
@@ -2605,6 +2724,12 @@
       if (!applyHostTranslation(el, t)) {
         markSkip(el, "no-replace");
         return "skip";
+      }
+      // 换字必须真的落地：宿主文本没变 = 英文原样留着，按可重试的 fail 处理
+      if (textOf(el).replace(/\s+/g, " ").trim() === String(srcText).replace(/\s+/g, " ").trim()) {
+        restoreTextSwap(el);
+        failBack(el, "replace-noop");
+        return "fail";
       }
       applyReplaceTypography(el, srcCs);
       el.classList.add("pbt-host");
@@ -2680,6 +2805,7 @@
 
   function rebuildTrNode(el, text) {
     if (!el?.dataset?.pbtId || !text) return null;
+    if (isReplaceMode()) return null;
     const node = document.createElement("div");
     node.className = "pbt-tr pbt-layout-stack";
     node.setAttribute("translate", "no");
@@ -2815,6 +2941,11 @@
     }
   }
 
+  /** replace 模式残留清道夫：含宿主已被回收/改 id 的孤儿双语条 */
+  function purgeTrNodes() {
+    document.querySelectorAll(".pbt-tr").forEach((n) => n.remove());
+  }
+
   function setMode(mode) {
     const next = mode === "translation" || mode === "replace" ? mode : "bilingual";
     settings.displayMode = next;
@@ -2828,6 +2959,7 @@
       }
       syncModeFor(el, tr);
     });
+    if (next === "replace") purgeTrNodes();
     renderFab();
     // 进入 replace：补全页未译块（缓存命中不重打）；不拆现有 attach
     if (next === "replace" && (translated || translating)) {
@@ -3091,10 +3223,11 @@
       const got = new Set();
       for (const row of rows || []) {
         if (!row?.text) continue;
-        row.text = collapseRepeatedTranslation(row.text);
         const rid = String(row.id);
         const src = byId.get(rid) || byId.get(row.id);
         if (!src) continue;
+        row.text = cleanTranslation(src.text || "", row.text);
+        if (!row.text) continue;
         if (!src.el.isConnected) {
           markSkip(src.el, "dead");
           got.add(rid);
@@ -3109,7 +3242,7 @@
         {
           const srcText0 = src.text || textOf(src.el);
           if (sameLanguageAsSource(srcText0, row.text)) {
-            markSkip(src.el, "same-lang");
+            if (echoSkip(src.el, srcText0) === "fail") failed += 1;
             got.add(rid);
             continue;
           }
@@ -3120,7 +3253,7 @@
           const cut = String(row.text).split(/[。！？；\n]/)[0].replace(/[—–-].*$/, "").trim();
           if (cut && !headingTranslationMismatch(src.el, srcText, cut)) {
             if (sameLanguageAsSource(srcText, cut)) {
-              markSkip(src.el, "same-lang");
+              if (echoSkip(src.el, srcText) === "fail") failed += 1;
               got.add(rid);
               continue;
             }
@@ -3136,9 +3269,12 @@
               continue;
             }
           }
-          markSkip(src.el, "heading-mismatch");
-          got.add(rid);
-          continue;
+          // replace 不插节点：宁可标题吃下整句译文，也不留英文标题
+          if (!isReplaceMode()) {
+            markSkip(src.el, "heading-mismatch");
+            got.add(rid);
+            continue;
+          }
         }
         const st = attach(src.el, row.text, "ok");
         if (st === "ok") {
@@ -3149,6 +3285,10 @@
             renderFab();
             toast(`已出译 ${countOk()} 段…`, false, true);
           }
+        } else if (st === "fail") {
+          // attach 已 failBack：保留可重试状态，勿覆写成永久 skip
+          failed += 1;
+          got.add(rid);
         } else if (st === "skip" || st === "dead") {
           const reason =
             st === "dead" ? "dead" : src.el.dataset.pbtSkipReason || "fragile";
