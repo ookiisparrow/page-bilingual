@@ -58,9 +58,23 @@ function snapshot() {
       return {
         h: Math.round(tr.getBoundingClientRect().height),
         name: (a?.textContent || '').trim().slice(0, 40),
-        injected: tr.querySelectorAll('.pbt-tr').length,
+        // 本行自己有译文时长高是应该的；没译却变形才是我们把邻行顶坏了
+        translated: !!tr.querySelector('[data-pbt-state="ok"]'),
       };
     });
+
+  // A1 的实质违规：译文和宿主并排占同一行，而不是落在宿主下方
+  let sameRowTr = 0;
+  for (const node of document.querySelectorAll('.pbt-tr[data-pbt-for]')) {
+    const host = document.querySelector(`[data-pbt-id="${CSS.escape(node.dataset.pbtFor)}"]`);
+    if (!host) continue;
+    const h = host.getBoundingClientRect();
+    const n = node.getBoundingClientRect();
+    if (n.height < 2 || h.height < 2) continue;
+    const beside = n.left >= h.right - 2 || n.right <= h.left + 2;
+    const sameLine = n.top < h.bottom - 2 && n.bottom > h.top + 2;
+    if (beside && sameLine) sameRowTr += 1;
+  }
   return {
     docW: Math.round(document.documentElement.scrollWidth),
     docH: Math.round(document.documentElement.scrollHeight),
@@ -69,6 +83,7 @@ function snapshot() {
     buttons: document.querySelectorAll('button:not(.pbt-retry)').length,
     liCount: [...document.querySelectorAll('li')].filter(vis).length,
     rows,
+    sameRowTr,
     ok: document.querySelectorAll('[data-pbt-state="ok"]').length,
     injected: document.querySelectorAll('.pbt-tr').length,
   };
@@ -152,13 +167,14 @@ await page.screenshot({ path: path.join(OUT, 'after.png') });
 await ctx.close();
 
 const widened = after.docW > before.docW + 2;
-const rowsMoved = before.rows.filter((r, i) => after.rows[i] && after.rows[i].h !== r.h).length;
-const rowsInjected = after.rows.filter((r) => r.injected > 0).length;
+const rowsMoved = before.rows.filter(
+  (r, i) => after.rows[i] && after.rows[i].h !== r.h && !after.rows[i].translated
+).length;
 const lostAnchors = before.anchors - after.anchors;
 const fails = [
   widened && `文档变宽 ${before.docW} → ${after.docW}（视口 ${after.vw}）：A1 行内插节点抢宽`,
-  rowsMoved && `${rowsMoved} 行高度被改：A1/A3 行不得撑高`,
-  rowsInjected && `${rowsInjected} 行内被插 .pbt-tr：A1 禁止 after() 抢同行`,
+  rowsMoved && `${rowsMoved} 行没译却被改了高度：A1/A3 不得顶坏邻行`,
+  after.sameRowTr && `${after.sameRowTr} 条译文和宿主并排同行：A1 禁止 after() 抢同行`,
   lostAnchors > 0 && `少了 ${lostAnchors} 个链接：整替毁了 DOM 结构`,
   pageErrors.length && `页面抛错 ${pageErrors.length} 次`,
 ].filter(Boolean);
@@ -167,6 +183,6 @@ fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify({ url: URL_, mode
 console.log(`${URL_}  ${MODE}  ${VW}x${VH}`);
 console.log(`  docW ${before.docW} → ${after.docW} | docH ${before.docH} → ${after.docH}`);
 console.log(`  anchors ${before.anchors} → ${after.anchors} | li ${before.liCount} → ${after.liCount}`);
-console.log(`  ok ${after.ok} | injected ${after.injected} | rows ${before.rows.length}`);
+console.log(`  ok ${after.ok} | injected ${after.injected} | 并排同行 ${after.sameRowTr} | rows ${before.rows.length}`);
 console.log(fails.length ? `FAIL\n  - ${fails.join('\n  - ')}` : 'PASS 布局未变形');
 process.exit(fails.length ? 1 : 0);
