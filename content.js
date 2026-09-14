@@ -44,8 +44,10 @@
   // 长页尾部（omarchy 新闻区在 y≈10500）曾被 220 的散叶上限直接截断
   const PBT_LOOSE_CAP = 600;
   const PBT_SIBLING_CAP = 120;
-  const PBT_MISS_CAP = 120;
-  const PBT_MISS_SWEEP_MS = 1000; // 800–1200：降 thrash
+  const PBT_MISS_CAP = 80; // 每轮漏扫上限；过大 + 全页 collect 会主线程卡顿
+  const PBT_MISS_SWEEP_MS = 1400; // 拉长间隔，给 paint/输入让路
+  const PBT_MISS_BACKOFF_MAX = 8000;
+  const PBT_MISS_MAX_ROUNDS = 10; // 单次 translate 漏扫轮次封顶，防永续 thrash
 
   const cache = new Map();
   let settings = { ...PBT.DEFAULTS, displayMode: "replace", scope: "full" };
@@ -64,9 +66,40 @@
   let mo = null;
   let missSweepTimer = 0;
   let missSweepRunning = false;
+  let missSweepRound = 0;
+  let missSweepEmpty = 0;
   let panelHotTimer = 0;
   let allowMissSweep = false; // 首热批上屏前不扫全页漏译
   let hotFirstPaintDone = false;
+
+  /** 收集波次内缓存 getComputedStyle，避免祖先链上万次重复读（卡顿主因） */
+  let styleWave = null;
+  function beginStyleWave() {
+    styleWave = new WeakMap();
+  }
+  function endStyleWave() {
+    styleWave = null;
+  }
+  function pbtCs(el) {
+    const native = globalThis.getComputedStyle;
+    if (!el || el.nodeType !== 1) return native(el);
+    if (!styleWave) return native(el);
+    let s = styleWave.get(el);
+    if (!s) {
+      s = native(el);
+      styleWave.set(el, s);
+    }
+    return s;
+  }
+  function withStyleWave(fn) {
+    const nested = !!styleWave;
+    if (!nested) beginStyleWave();
+    try {
+      return fn();
+    } finally {
+      if (!nested) endStyleWave();
+    }
+  }
 
   function isCursorEngine() {
     const e = String(settings.engine || "").toLowerCase();
@@ -164,6 +197,10 @@
   }
 
   function collectNewBlocks(root) {
+    return withStyleWave(() => collectNewBlocksInner(root));
+  }
+
+  function collectNewBlocksInner(root) {
     root = root || document.body;
     if (!root || !root.querySelectorAll) return [];
     const out = [];
@@ -221,9 +258,10 @@
   function scheduleTranslateNew() {
     if (!(translated || translating)) return;
     clearTimeout(moTimer);
+    // 略加长 debounce：paint 触发的 childList 风暴时合并成一次增量
     moTimer = setTimeout(() => {
       translateNewBlocks().catch(() => {});
-    }, 220);
+    }, 360);
   }
 
   function isRevealSurface(el) {
@@ -293,16 +331,32 @@
     }, 80);
   }
 
+  function isPbtOwnedNode(el) {
+    if (!el || el.nodeType !== 1) return false;
+    try {
+      if (el.id === "pbt-root" || el.id === "pbt-float-root") return true;
+      if (el.classList?.contains("pbt-tr") || el.classList?.contains("pbt-float")) return true;
+      if (el.closest?.("#pbt-root, #pbt-float-root, .pbt-tr, .pbt-float")) return true;
+    } catch { /* ignore */ }
+    return false;
+  }
+
   function watchDynamicMenus() {
     if (mo) return;
     mo = new MutationObserver((mutations) => {
       if (!(translated || translating)) return;
       const panels = [];
       const seen = new Set();
+      let foreignChild = false;
       for (const m of mutations) {
         if (m.type === "attributes") {
           const el = m.target;
-          if (!el || el.nodeType !== 1) continue;
+          if (!el || el.nodeType !== 1 || isPbtOwnedNode(el)) continue;
+          // 我们自己给宿主打的 pbt-* class 不算展开；避免 paint ↔ observer 反馈
+          if (m.attributeName === "class") {
+            const cl = typeof el.className === "string" ? el.className : "";
+            if (/\bpbt-/.test(cl) && !looksExpanded(el, "class")) continue;
+          }
           if (!looksExpanded(el, m.attributeName)) continue;
           const panel = revealPanelFor(el);
           if (panel && !seen.has(panel)) {
@@ -311,7 +365,8 @@
           }
         } else if (m.type === "childList") {
           for (const n of m.addedNodes) {
-            if (!n || n.nodeType !== 1) continue;
+            if (!n || n.nodeType !== 1 || isPbtOwnedNode(n)) continue;
+            foreignChild = true;
             if (isRevealSurface(n) || n.querySelector?.(POPUP)) {
               const panel = isRevealSurface(n) ? n : n.querySelector?.(POPUP);
               if (panel && isEffectivelyVisible(panel) && !seen.has(panel)) {
@@ -325,7 +380,7 @@
       if (panels.length) {
         for (const p of panels) scheduleTranslatePanel(p);
         scheduleMissSweep(PBT_MISS_SWEEP_MS);
-      } else {
+      } else if (foreignChild) {
         scheduleTranslateNew();
       }
     });
@@ -371,7 +426,9 @@
    */
   function reclaimSameLangSiblings(root) {
     const out = [];
-    for (const el of root.querySelectorAll('[data-pbt-state="skip"]')) {
+    const skips = root.querySelectorAll('[data-pbt-state="skip"]');
+    if (!skips.length) return out;
+    for (const el of skips) {
       if (el.dataset.pbtSkipReason !== "same-lang") continue;
       if (el.dataset.pbtRetried === "1") continue;
       if (!listPeerTranslated(el)) continue;
@@ -386,40 +443,70 @@
     return out;
   }
 
-  /** 漏译扫描：replace 用整页 collect 重扫 fail/未收块；宽扫补 loose + same-lang 兄弟 */
+  /** 漏译扫描：首轮可全页 collect；后续轮走增量，避免每秒 500ms+ 主线程卡顿 */
   function collectMissedVisible() {
-    const root = document.body;
-    if (!root) return [];
-    const wide = isReplaceMode() || isReplaceFull() || settings.serviceOn;
-    const raw = isReplaceMode() ? collect("full") : collectNewBlocks(root);
-    const all = raw.filter((b) => {
-      if (!b?.el || b.el.classList?.contains("pbt-skip")) return false;
-      const st = b.el.dataset?.pbtState;
-      if (st === "ok" || st === "skip" || st === "pending") return false;
-      if (st === "queued") return !translating;
-      if (st === "fail") return true;
-      if (b.el.classList.contains("pbt-host") || b.el.classList.contains("pbt-text-swap")) return false;
-      return true;
-    });
-    if (wide) {
-      const seen = new Set(all.map((b) => b.el));
-      // 首轮 collectLooseLatin 有上限，长页尾部只能靠补扫接力；same-lang 钉死项给一次重试
-      for (const b of [...collectLooseLatin(root), ...reclaimSameLangSiblings(root)]) {
-        if (!b?.el || seen.has(b.el) || isSettledPbt(b.el)) continue;
-        seen.add(b.el);
-        all.push(b);
+    return withStyleWave(() => {
+      const root = document.body;
+      if (!root) return [];
+      const wide = isReplaceMode() || isReplaceFull() || settings.serviceOn;
+      let raw;
+      if (isReplaceMode() && missSweepRound === 0) {
+        // 首轮：整页 collect（已含 loose + expand），保证覆盖
+        raw = collect("full");
+      } else if (isReplaceMode()) {
+        // 后续：增量块；仅前两轮再补散叶/兄弟，避免空闲时每次扫完全页 span/div（~100ms+）
+        raw = collectNewBlocks(root);
+        if (missSweepRound <= 2) {
+          const seen = new Set(raw.map((b) => b.el));
+          for (const b of collectLooseLatin(root)) {
+            if (!b?.el || seen.has(b.el) || isSettledPbt(b.el)) continue;
+            seen.add(b.el);
+            raw.push(b);
+          }
+          raw = expandListSiblings(raw);
+        }
+      } else {
+        raw = collectNewBlocks(root);
       }
-    }
-    const prefer = wide ? expandListSiblings(all) : all.filter((b) => inView(b.el, 0.75));
-    return prefer.slice(0, wide ? PBT_MISS_CAP : 24);
+      const all = raw.filter((b) => {
+        if (!b?.el || b.el.classList?.contains("pbt-skip")) return false;
+        const st = b.el.dataset?.pbtState;
+        if (st === "ok" || st === "skip" || st === "pending") return false;
+        if (st === "queued") return !translating;
+        // fail 只重试一次，避免 miss-sweep 永续烧主线程
+        if (st === "fail") return b.el.dataset.pbtFailRetry !== "1";
+        if (b.el.classList.contains("pbt-host") || b.el.classList.contains("pbt-text-swap")) return false;
+        return true;
+      });
+      if (wide) {
+        const seen = new Set(all.map((b) => b.el));
+        for (const b of reclaimSameLangSiblings(root)) {
+          if (!b?.el || seen.has(b.el) || isSettledPbt(b.el)) continue;
+          seen.add(b.el);
+          all.push(b);
+        }
+      }
+      let prefer = wide ? all : all.filter((b) => inView(b.el, 0.75));
+      // 首轮后优先视口，降低长页全量布局读
+      if (wide && missSweepRound > 0) {
+        const view = prefer.filter((b) => inView(b.el, 1.25));
+        if (view.length) prefer = view;
+      }
+      return prefer.slice(0, wide ? PBT_MISS_CAP : 24);
+    });
   }
 
   function scheduleMissSweep(delay) {
     if (!(translated || translating || settings.serviceOn)) return;
+    if (missSweepRound >= PBT_MISS_MAX_ROUNDS) return;
     clearTimeout(missSweepTimer);
     const base = delay == null ? PBT_MISS_SWEEP_MS : delay;
     // 首热批未上屏：只挂长延迟，避免全页 miss-sweep 抢额度导致斑驳
-    const wait = allowMissSweep ? base : Math.max(base, 1200);
+    let wait = allowMissSweep ? base : Math.max(base, 1200);
+    // 轮次越多间隔越长（上限 PBT_MISS_BACKOFF_MAX）
+    if (allowMissSweep && missSweepRound > 0) {
+      wait = Math.min(PBT_MISS_BACKOFF_MAX, Math.max(wait, PBT_MISS_SWEEP_MS * (1 + missSweepRound * 0.6)));
+    }
     missSweepTimer = setTimeout(() => {
       if (!allowMissSweep && (translating || settings.serviceOn)) {
         // 再等一轮；hot 完成后会 allowMissSweep=true 并主动 schedule
@@ -433,22 +520,33 @@
   async function sweepMissedVisible() {
     if (missSweepRunning || !(translated || translating || settings.serviceOn)) return;
     if (!allowMissSweep) return;
+    if (missSweepRound >= PBT_MISS_MAX_ROUNDS) return;
     missSweepRunning = true;
     let n = 0;
     try {
       const my = runId;
       const blocks = collectMissedVisible();
       n = blocks.length;
-      if (!blocks.length) return;
+      if (!blocks.length) {
+        missSweepEmpty += 1;
+        // 连续两次空扫才停；给晚到 DOM 一次机会
+        if (missSweepEmpty < 2 && (translated || translating || settings.serviceOn)) {
+          scheduleMissSweep(PBT_MISS_SWEEP_MS * 2);
+        }
+        return;
+      }
+      missSweepEmpty = 0;
+      missSweepRound += 1;
       const items = blocks.map((b) => {
+        if (b.el.dataset?.pbtState === "fail") b.el.dataset.pbtFailRetry = "1";
         markQueued(b.el);
         return { id: ensureId(b.el), text: b.text, el: b.el };
       });
       await runQueue(items, { size: queueBatchSize(), workers: coldWorkerCount(), my });
     } finally {
       missSweepRunning = false;
-      // 有漏就继续扫，直到空闲（拉长间隔降 thrash）
-      if (n > 0 && (translated || translating || settings.serviceOn)) {
+      // 有漏就继续扫，但受轮次/退避限制
+      if (n > 0 && missSweepRound < PBT_MISS_MAX_ROUNDS && (translated || translating || settings.serviceOn)) {
         scheduleMissSweep(PBT_MISS_SWEEP_MS);
       }
     }
@@ -813,7 +911,7 @@
     let asCta = false;
     if (!asBtn && el.tagName === "A") {
       try {
-        const cs = getComputedStyle(el);
+        const cs = pbtCs(el);
         const cls = String(el.className || "");
         asCta =
           /(?:^|[\s_-])(btn|button|cta)(?:[\s_-]|$)/i.test(cls) ||
@@ -926,7 +1024,7 @@
     let n = el.parentElement;
     for (let i = 0; i < 6 && n && n !== document.body; i++, n = n.parentElement) {
       try {
-        const s = getComputedStyle(n);
+        const s = pbtCs(n);
         const clamp = s.webkitLineClamp;
         const clamped = (clamp && clamp !== "none" && clamp !== "0") || /line-clamp/i.test(n.className || "");
         // 行 chrome（不换行 flex 行 / 截断的文件名格）：放开 overflow 会把邻列顶开
@@ -1044,10 +1142,10 @@
         }
       }
     }
-    for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+    for (let n = el, hops = 0; n && n !== document.documentElement && hops < 8; n = n.parentElement, hops++) {
       try {
         if (isPopupSurface(n)) return false;
-        const s = getComputedStyle(n);
+        const s = pbtCs(n);
         // sticky/fixed 导航壳：跳过；正文里偶发 sticky 段仍允许标题/散文
         if (s.position === "fixed" || s.position === "sticky") {
           if (isTextControl(el) || isContentLink(el) || isLabelLeaf(el)) continue;
@@ -1067,7 +1165,7 @@
   function effectiveOpacity(el) {
     let o = 1;
     for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
-      const s = getComputedStyle(n);
+      const s = pbtCs(n);
       if (s.visibility === "hidden") return 0;
       const op = Number(s.opacity);
       if (!Number.isNaN(op)) o *= op;
@@ -1079,7 +1177,7 @@
   function needsFloat(el) {
     if (!el || !el.isConnected) return true;
     if (effectiveOpacity(el) < 0.12) return true;
-    const s = getComputedStyle(el);
+    const s = pbtCs(el);
     if (s.display === "none") return true;
     const r = el.getBoundingClientRect();
     if (r.width < 2 && r.height < 2) return true;
@@ -1598,7 +1696,7 @@
     try {
       let n = el;
       for (let i = 0; i < 5 && n; i++, n = n.parentElement) {
-        const s = getComputedStyle(n);
+        const s = pbtCs(n);
         if (s.textOverflow === "ellipsis") return true;
         if (s.whiteSpace === "nowrap" && (s.overflow === "hidden" || s.overflowX === "hidden")) return true;
         if ((s.overflow === "hidden" || s.overflowY === "hidden") && n.clientHeight && n.scrollHeight <= n.clientHeight + 2) {
@@ -1619,7 +1717,7 @@
     if (isTightClip(el) && !heroish) return true;
     const headingOk = isHeading(el) && textOf(el).length >= (el.dataset?.pbtRole === "hero" ? 8 : 12);
     try {
-      const cs = getComputedStyle(el);
+      const cs = pbtCs(el);
       // 大标题常含多 span / 自身 flex：不得因此整段跳过（Stripe/Apple/BBC hero）
       if (!headingOk && (cs.display.includes("flex") || cs.display.includes("grid")) && el.children.length >= 2) {
         if (textOf(el).length <= 100) return true;
@@ -1627,7 +1725,7 @@
       if (!headingOk) {
         let n = el;
         for (let i = 0; i < 4 && n; i++, n = n.parentElement) {
-          const s = getComputedStyle(n);
+          const s = pbtCs(n);
           if (s.overflow === "hidden" || s.overflowX === "hidden" || s.overflowY === "hidden") {
             if (textOf(el).length <= 120) return true;
           }
@@ -1635,7 +1733,7 @@
       }
       const p = el.parentElement;
       if (p) {
-        const ps = getComputedStyle(p);
+        const ps = pbtCs(p);
         const rowFlex =
           (ps.display.includes("flex") || ps.display.includes("grid")) &&
           ps.flexDirection !== "column" &&
@@ -1672,7 +1770,7 @@
 
   function hostDisplayKind(el) {
     try {
-      const d = getComputedStyle(el).display || "";
+      const d = pbtCs(el).display || "";
       if (d.includes("flex")) return "flex";
       if (d.includes("grid")) return "grid";
       if (d.includes("inline")) return "inline";
@@ -1692,7 +1790,7 @@
     try {
       const p = el.parentElement;
       if (p) {
-        const ps = getComputedStyle(p);
+        const ps = pbtCs(p);
         const rowFlex =
           (ps.display.includes("flex") || ps.display.includes("grid")) &&
           ps.flexDirection !== "column" &&
@@ -1702,7 +1800,7 @@
       }
       const row = el.closest("tr,[role='row']");
       if (row) {
-        const cs = getComputedStyle(el);
+        const cs = pbtCs(el);
         const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 16) * 1.4;
         if (row.getBoundingClientRect().height <= lh * 2.2) return true;
       }
@@ -1718,7 +1816,7 @@
     const p = el.parentElement;
     if (!p) return false;
     try {
-      const ps = getComputedStyle(p);
+      const ps = pbtCs(p);
       if (!(ps.display.includes("flex") || ps.display.includes("grid"))) return false;
       if (ps.flexDirection === "column" || ps.flexDirection === "column-reverse") return false;
       const kids = [...p.children].filter((c) => c.tagName === "A" || c.getAttribute?.("role") === "link");
@@ -1738,7 +1836,7 @@
   function isEffectivelyVisible(el) {
     if (!el || el.nodeType !== 1) return false;
     try {
-      const cs = getComputedStyle(el);
+      const cs = pbtCs(el);
       if (cs.display === "none" || cs.visibility === "hidden") return false;
       if (effectiveOpacity(el) < 0.08) return false;
       const r = el.getBoundingClientRect();
@@ -1790,7 +1888,7 @@
       const p = el.parentElement;
       if (p) {
         try {
-          const ps = getComputedStyle(p);
+          const ps = pbtCs(p);
           if (
             (ps.display.includes("flex") || ps.display.includes("grid")) &&
             ps.flexDirection !== "column" &&
@@ -1881,7 +1979,7 @@
     // Apple 等营销标题常多 span 嵌套
     if (el.children.length > 10) return false;
     try {
-      const cs = getComputedStyle(el);
+      const cs = pbtCs(el);
       const px = parseFloat(cs.fontSize) || 0;
       if (px < 20) return false;
       const r = el.getBoundingClientRect();
@@ -2064,17 +2162,32 @@
   function pruneAncestorBlocks(blocks) {
     if (!blocks.length) return blocks;
     const els = blocks.map((b) => b.el);
+    const elSet = new Set(els);
     const depth = new Map();
+    // ancestor → collected descendants（一次祖先行走建图，避免 el.contains 双重循环）
+    const descendants = new Map();
     for (const el of els) {
       let d = 0;
-      for (let n = el; n; n = n.parentElement) d += 1;
+      for (let n = el; n; n = n.parentElement) {
+        d += 1;
+        if (n !== el && elSet.has(n)) {
+          let list = descendants.get(n);
+          if (!list) {
+            list = [];
+            descendants.set(n, list);
+          }
+          list.push(el);
+        }
+      }
       depth.set(el, d);
     }
-    // 由外向内定夺：祖先先决定「留自己丢行内链接」还是「让位给叶子」
     const drop = new Set();
+    // 由外向内定夺：祖先先决定「留自己丢行内链接」还是「让位给叶子」
     for (const el of [...els].sort((a, b) => depth.get(a) - depth.get(b))) {
       if (drop.has(el)) continue;
-      const inner = els.filter((o) => o !== el && !drop.has(o) && el.contains(o));
+      const raw = descendants.get(el);
+      if (!raw || !raw.length) continue;
+      const inner = raw.filter((o) => !drop.has(o));
       if (!inner.length) continue;
       if (prefersWholeBlock(el, inner)) {
         for (const o of inner) drop.add(o);
@@ -2087,8 +2200,17 @@
 
   function isBlockLevelBox(el) {
     if (!el || el.nodeType !== 1) return false;
+    const t = el.tagName;
+    // 常见块/行内标签免 getComputedStyle（collect/expand 热路径）
+    if (/^(P|H[1-6]|LI|UL|OL|DIV|SECTION|ARTICLE|BLOCKQUOTE|FIGCAPTION|DT|DD|TR|TD|TH|HEADER|FOOTER|NAV|MAIN|ASIDE|FORM|TABLE|PRE)$/.test(t)) {
+      return true;
+    }
+    if (/^(A|EM|STRONG|B|I|U|SMALL|MARK|ABBR|SUP|SUB|CODE|BR|WBR|IMG|SVG|INPUT|BUTTON|LABEL|SPAN)$/.test(t)) {
+      // SPAN 可能是 block class：仍读 display；其余真行内直接否
+      if (t !== "SPAN") return false;
+    }
     try {
-      const d = getComputedStyle(el).display || "";
+      const d = pbtCs(el).display || "";
       return !d.startsWith("inline") && d !== "none" && d !== "contents";
     } catch {
       return false;
@@ -2103,6 +2225,15 @@
   function expandListSiblings(blocks) {
     if (!blocks || !blocks.length) return blocks || [];
     const seen = new Set(blocks.map((b) => b.el));
+    // O(n·depth) 祖先标记，替代 [...seen].some(s => el.contains(s))
+    const hasCollectedDesc = new Set();
+    const markAncestors = (el) => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        if (hasCollectedDesc.has(n)) break;
+        hasCollectedDesc.add(n);
+      }
+    };
+    for (const el of seen) markAncestors(el);
     const parents = new Set();
     for (const b of blocks) {
       const p = b.el.parentElement;
@@ -2118,10 +2249,11 @@
         if (isSkip(el) || isStructure(el)) continue;
         if (el.querySelector?.(BLOCKS)) continue;
         // 已有后代被收：留给叶子，别拼父级
-        if ([...seen].some((s) => el.contains(s))) continue;
+        if (hasCollectedDesc.has(el)) continue;
         const text = textOf(el);
         if (text.length > 800 || !worth(el, text)) continue;
         seen.add(el);
+        markAncestors(el);
         if (!el.dataset.pbtRole) el.dataset.pbtRole = "prose";
         blocks.push({ el, text });
         added += 1;
@@ -2131,27 +2263,29 @@
   }
 
   function collect(scope) {
-    const mode = scope || settings.scope || "main";
-    let out = collectFromRoot(mode === "full" ? document.body : findMainRoot());
-    if (!out.length && mode !== "full") out = collectFromRoot(document.body);
-    // replace/full：始终补扫叶子短文，避免「只收到几个 p」漏掉大量 span/div/button
-    if (mode === "full" || isReplaceFull()) {
-      const extra = collectLooseLatin(document.body);
-      if (extra.length) {
-        const seen = new Set(out.map((b) => b.el));
-        for (const b of extra) {
-          if (seen.has(b.el)) continue;
-          if (out.some((a) => a.el.contains(b.el) && isCollectBlock(a.el))) continue;
-          seen.add(b.el);
-          out.push(b);
+    return withStyleWave(() => {
+      const mode = scope || settings.scope || "main";
+      let out = collectFromRoot(mode === "full" ? document.body : findMainRoot());
+      if (!out.length && mode !== "full") out = collectFromRoot(document.body);
+      // replace/full：始终补扫叶子短文，避免「只收到几个 p」漏掉大量 span/div/button
+      if (mode === "full" || isReplaceFull()) {
+        const extra = collectLooseLatin(document.body);
+        if (extra.length) {
+          const seen = new Set(out.map((b) => b.el));
+          for (const b of extra) {
+            if (seen.has(b.el)) continue;
+            if (out.some((a) => a.el.contains(b.el) && isCollectBlock(a.el))) continue;
+            seen.add(b.el);
+            out.push(b);
+          }
+          out = pruneAncestorBlocks(out);
         }
-        out = pruneAncestorBlocks(out);
+      } else if (!out.length) {
+        out = collectLooseLatin(document.body);
       }
-    } else if (!out.length) {
-      out = collectLooseLatin(document.body);
-    }
-    // 兄弟齐队后再否决行 chrome：散叶/合并父级等旁路不过 worth()，只有这里挡得住（A5）
-    return expandListSiblings(out).filter((b) => !isRowChromeText(b.el, b.text));
+      // 兄弟齐队后再否决行 chrome：散叶/合并父级等旁路不过 worth()，只有这里挡得住（A5）
+      return expandListSiblings(out).filter((b) => !isRowChromeText(b.el, b.text));
+    });
   }
 
   /** 是否「结构安全」：仅极小纯文本叶可 textContent；hero/大标题/有结构一律否 */
@@ -2162,7 +2296,7 @@
     const kids = [...el.children].filter((c) => !/^(BR|WBR)$/.test(c.tagName));
     if (kids.length) return false;
     try {
-      const px = parseFloat(getComputedStyle(el).fontSize) || 16;
+      const px = parseFloat(pbtCs(el).fontSize) || 16;
       if (isHeading(el) && px >= 22) return false;
       const r = el.getBoundingClientRect();
       // 默认仅译文走 hide-visual；textContent 仅白名单矮叶（<80px）
@@ -2219,9 +2353,9 @@
         // 交给 pruneAncestorBlocks 定夺 —— 否则父级一旦被丢，子级也随之漏掉
         // （HN 的 span.subline 会带走里面的 span.score）
         let anc = false;
-        for (const s of seen) {
-          if (!s.contains?.(el)) continue;
-          if (/^(A|BUTTON|LABEL)$/.test(s.tagName) || s.getAttribute?.("role") === "button") {
+        for (let p = el.parentElement; p; p = p.parentElement) {
+          if (!seen.has(p)) continue;
+          if (/^(A|BUTTON|LABEL)$/.test(p.tagName) || p.getAttribute?.("role") === "button") {
             anc = true;
             break;
           }
@@ -2341,7 +2475,7 @@
 
   function paintColorFrom(el) {
     try {
-      const cs = getComputedStyle(el);
+      const cs = pbtCs(el);
       let fill = "";
       try {
         fill = cs.webkitTextFillColor || "";
@@ -2366,7 +2500,7 @@
   }
 
   function applyTypeMatch(el, host) {
-    const cs = getComputedStyle(el);
+    const cs = pbtCs(el);
     const srcPx = parseFloat(cs.fontSize) || 16;
     // 大标题（h1/h2 或 ≥18px 的 heading）：译文固定小两号（中文字号约 2pt/号 → 4pt）
     let trPx = srcPx;
@@ -2425,7 +2559,7 @@
     try {
       const r = el.getBoundingClientRect();
       if (!r.width) return true;
-      const cs = getComputedStyle(el);
+      const cs = pbtCs(el);
       const probe = document.createElement("div");
       probe.setAttribute("aria-hidden", "true");
       probe.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden;white-space:nowrap;pointer-events:none;";
@@ -2542,7 +2676,7 @@
     try {
       let n = el;
       for (let i = 0; i < 6 && n; i++, n = n.parentElement) {
-        const bg = getComputedStyle(n).backgroundColor;
+        const bg = pbtCs(n).backgroundColor;
         const rgb = parseRgb(bg);
         if (!rgb || rgb.a < 0.15) continue;
         return relativeLuminance(rgb);
@@ -2649,7 +2783,7 @@
     if (!el) return;
     let cs = srcCs;
     try {
-      if (!cs) cs = getComputedStyle(el);
+      if (!cs) cs = pbtCs(el);
     } catch {
       return;
     }
@@ -2688,7 +2822,7 @@
         if (!col || nearClear) {
           let p = el.parentElement;
           for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
-            const pc = paintColorFrom(p) || getComputedStyle(p).color;
+            const pc = paintColorFrom(p) || pbtCs(p).color;
             const pm = String(pc).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([0-9.]+))?\)/i);
             if (pc && pc !== "transparent" && !(pm && Number(pm[4] || 1) < 0.18)) {
               col = pc;
@@ -3057,18 +3191,18 @@
     const p = el.parentElement;
     if (!p) return true;
     try {
-      const ps = getComputedStyle(p);
+      const ps = pbtCs(p);
       const dir = ps.flexDirection || "row";
       const isGrid = ps.display.includes("grid");
       const isFlex = ps.display.includes("flex");
       if (dir === "column-reverse" || dir === "row-reverse") {
-        const base = Number.parseInt(getComputedStyle(el).order, 10);
+        const base = Number.parseInt(pbtCs(el).order, 10);
         const b = Number.isFinite(base) ? base : 0;
         if (!el.style.order) el.style.order = String(b);
         // reverse 轴上 order 更小 → 视觉更靠后（在宿主下方）
         node.style.order = String(b - 1);
       } else if (isFlex || isGrid) {
-        const base = Number.parseInt(getComputedStyle(el).order, 10);
+        const base = Number.parseInt(pbtCs(el).order, 10);
         const b = Number.isFinite(base) ? base : 0;
         if (!el.style.order) el.style.order = String(b);
         // 正向 flex/grid：译文 order 必须 ≥ 宿主，避免卡片内 trAbove
@@ -3098,7 +3232,7 @@
       }
       // 视觉仍在宿主上方：再纠一次；仍失败则撤掉，由 attach 跳过
       if (trVisuallyAboveHost(el, node)) {
-        const base = Number.parseInt(getComputedStyle(el).order, 10);
+        const base = Number.parseInt(pbtCs(el).order, 10);
         const b = Number.isFinite(base) ? base : 0;
         if (!el.style.order) el.style.order = String(b);
         if (dir === "column-reverse" || dir === "row-reverse") node.style.order = String(b - 2);
@@ -3237,7 +3371,7 @@
       const p = el.parentElement;
       if (p) {
         try {
-          const ps = getComputedStyle(p);
+          const ps = pbtCs(p);
           if (
             (ps.display.includes("flex") || ps.display.includes("grid")) &&
             ps.flexDirection !== "column" &&
@@ -3273,7 +3407,7 @@
     if (isTextControl(el)) {
       try {
         const p = el.parentElement;
-        const ps = p ? getComputedStyle(p) : null;
+        const ps = p ? pbtCs(p) : null;
         const row =
           ps &&
           (ps.display.includes("flex") || ps.display.includes("grid")) &&
@@ -3301,7 +3435,7 @@
       }
       let srcCs = null;
       try {
-        srcCs = getComputedStyle(el);
+        srcCs = pbtCs(el);
       } catch { /* ignore */ }
       relaxClipAncestors(el);
       if (!applyHostTranslation(el, t)) {
@@ -3443,7 +3577,7 @@
       // 采样原文排版：若尚未换字，computed 仍是原文
       let srcCs = null;
       try {
-        srcCs = getComputedStyle(el);
+        srcCs = pbtCs(el);
       } catch { /* ignore */ }
 
       const ok = applyHostTranslation(el, t);
@@ -3576,6 +3710,10 @@
     runId += 1;
     allowMissSweep = false;
     hotFirstPaintDone = false;
+    missSweepRound = 0;
+    missSweepEmpty = 0;
+    clearTimeout(missSweepTimer);
+    missSweepTimer = 0;
     unwatchDynamicMenus();
     if (stopScrollWatch) {
       stopScrollWatch();
@@ -4121,6 +4259,8 @@
     translated = false;
     allowMissSweep = false;
     hotFirstPaintDone = false;
+    missSweepRound = 0;
+    missSweepEmpty = 0;
     watchDynamicMenus();
     renderFab();
 
@@ -4148,7 +4288,7 @@
       // 视口散文强优先（修 wiki/github/medium 热区空窗）
       if (/^(P|LI|BLOCKQUOTE)$/.test(el.tagName) || el.dataset?.pbtRole === "prose") return -40;
       try {
-        const px = parseFloat(getComputedStyle(el).fontSize) || 16;
+        const px = parseFloat(pbtCs(el).fontSize) || 16;
         if (px >= 28) return -30;
         if (px >= 22) return -14;
       } catch { /* ignore */ }
@@ -4922,14 +5062,32 @@
     if (spaBodyMo) return;
     const root = document.body || document.documentElement;
     if (!root) return;
-    spaBodyMo = new MutationObserver(() => {
+    spaBodyMo = new MutationObserver((mutations) => {
       if (!settings.serviceOn) return;
+      let relevant = false;
+      for (const m of mutations) {
+        for (const n of m.addedNodes) {
+          if (n.nodeType === 1 && !isPbtOwnedNode(n)) {
+            relevant = true;
+            break;
+          }
+        }
+        if (relevant) break;
+        for (const n of m.removedNodes) {
+          if (n.nodeType === 1 && !isPbtOwnedNode(n)) {
+            relevant = true;
+            break;
+          }
+        }
+        if (relevant) break;
+      }
+      if (!relevant) return;
       clearTimeout(spaDomTimer);
       spaDomTimer = setTimeout(() => {
         if (!settings.serviceOn) return;
         if (translating) {
           scheduleTranslateNew();
-          scheduleMissSweep(PBT_MISS_SWEEP_MS);
+          // 翻译进行中不额外刷 miss-sweep：hot 结束后会挂
           return;
         }
         if (!translated) softAutoTranslate("dom");
@@ -4937,7 +5095,7 @@
           scheduleTranslateNew();
           scheduleMissSweep(PBT_MISS_SWEEP_MS);
         }
-      }, 480);
+      }, 640);
     });
     spaBodyMo.observe(root, { childList: true, subtree: true });
   }
