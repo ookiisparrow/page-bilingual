@@ -71,6 +71,9 @@
   function coldWorkerCount() {
     return isCursorEngine() ? PBT_COLD_WORKERS_CURSOR : PBT_COLD_WORKERS;
   }
+  function isReplaceMode() {
+    return (settings.displayMode || "replace") === "replace";
+  }
 
 
   const ui = { host: null, shadow: null };
@@ -140,9 +143,9 @@
   function isSettledPbt(el) {
     if (!el) return true;
     const st = el.dataset?.pbtState;
-    if (st === "ok" || st === "skip" || st === "pending" || st === "queued" || st === "fail") return true;
+    if (st === "ok" || st === "skip" || st === "pending" || st === "queued") return true;
     if (el.classList?.contains("pbt-skip") || el.classList?.contains("pbt-host") || el.classList?.contains("pbt-text-swap")) return true;
-    if (el.nextElementSibling?.classList?.contains("pbt-tr")) return true;
+    if (!isReplaceMode() && el.nextElementSibling?.classList?.contains("pbt-tr")) return true;
     return false;
   }
 
@@ -333,16 +336,25 @@
     missSweepTimer = 0;
   }
 
-  /** 漏译扫描：replace/serviceOn 全页未 settled；否则视口。尊重 skip/same-lang */
+  /** 漏译扫描：replace 用整页 collect 重扫 fail/未收块；双语仍扫增量。 */
   function collectMissedVisible() {
     const root = document.body;
     if (!root) return [];
-    const all = collectNewBlocks(root).filter((b) => !isSettledPbt(b.el));
+    const raw = isReplaceMode() ? collect("full") : collectNewBlocks(root);
+    const all = raw.filter((b) => {
+      if (!b?.el || b.el.classList?.contains("pbt-skip")) return false;
+      const st = b.el.dataset?.pbtState;
+      if (st === "ok" || st === "skip" || st === "pending") return false;
+      if (st === "queued") return !translating;
+      if (st === "fail") return true;
+      if (b.el.classList.contains("pbt-host") || b.el.classList.contains("pbt-text-swap")) return false;
+      return true;
+    });
     const prefer =
-      isReplaceFull() || settings.serviceOn
+      isReplaceMode() || isReplaceFull() || settings.serviceOn
         ? all
         : all.filter((b) => inView(b.el, 0.75));
-    return prefer.slice(0, isReplaceFull() || settings.serviceOn ? 80 : 24);
+    return prefer.slice(0, isReplaceMode() || isReplaceFull() || settings.serviceOn ? 80 : 24);
   }
 
   function scheduleMissSweep(delay) {
@@ -2478,6 +2490,14 @@
     }
     // 已成功挂过且同文：禁止再叠一层 .pbt-tr
     if (el.dataset.pbtState === "ok" && el.dataset.pbtId && state === "ok") {
+      if (isReplaceMode()) {
+        el.dataset.pbtTrText = translatedText === "…" ? "" : translatedText;
+        if (translatedText && translatedText !== "…" && translatedText !== "...") {
+          applyHostTranslation(el, translatedText);
+        }
+        clearAttached(el);
+        return "ok";
+      }
       const existing = document.querySelectorAll(`.pbt-tr[data-pbt-for="${CSS.escape(el.dataset.pbtId)}"]`);
       if (existing.length === 1) {
         const span = existing[0].querySelector(".pbt-tr-text");
@@ -2495,8 +2515,9 @@
         clearAttached(el);
       }
     }
-    // 脆弱宿主：禁止 append（收集阶段应已过滤；双保险）；文案按钮/正文链除外
+    // 脆弱宿主：双语禁止 append；replace 仍换字（芯片除外）
     if (
+      !isReplaceMode() &&
       !isPopupSurface(el) &&
       !isTextControl(el) &&
       !isContentLink(el) &&
@@ -2504,6 +2525,9 @@
         (isTightClip(el) && !(isHeading(el) || el.dataset?.pbtRole === "hero")) ||
         isChipListItem(el))
     ) {
+      return "skip";
+    }
+    if (isReplaceMode() && (isChipListItem(el) || isChipListItem(el.parentElement))) {
       return "skip";
     }
     // 折叠短标题在横向 flex 行：禁止 after 抢宽；hero 长标题放行
@@ -2533,8 +2557,8 @@
       }
     }
 
-    // 标题只挂标题译文；正文级译文视为错位
-    if (headingTranslationMismatch(el, textOf(el), translatedText)) {
+    // 标题只挂标题译文；正文级译文视为错位。replace 仍换字，避免标题整段漏译
+    if (!isReplaceMode() && headingTranslationMismatch(el, textOf(el), translatedText)) {
       return "skip";
     }
 
@@ -2557,6 +2581,39 @@
           return attachPopupText(el, translatedText, state) ? "ok" : "skip";
         }
       } catch { /* fall through to stack */ }
+    }
+
+    if (isReplaceMode()) {
+      if (state === "fail") {
+        failBack(el, translatedText);
+        return "skip";
+      }
+      ensureId(el);
+      clearAttached(el);
+      restoreTextSwap(el);
+      const t = translatedText === "…" || translatedText === "..." ? "" : translatedText;
+      el.dataset.pbtTrText = t;
+      if (!t) {
+        markPending(el);
+        return "ok";
+      }
+      let srcCs = null;
+      try {
+        srcCs = getComputedStyle(el);
+      } catch { /* ignore */ }
+      relaxClipAncestors(el);
+      if (!applyHostTranslation(el, t)) {
+        markSkip(el, "no-replace");
+        return "skip";
+      }
+      applyReplaceTypography(el, srcCs);
+      el.classList.add("pbt-host");
+      if (el.dataset.pbtRole !== "hero" && el.dataset.pbtRole !== "control") el.dataset.pbtRole = "prose";
+      el.dataset.pbtState = state || "ok";
+      try {
+        if (typeof nudgeFabAwayFromContent === "function") nudgeFabAwayFromContent();
+      } catch { /* ignore */ }
+      return "ok";
     }
 
     const id = ensureId(el);
@@ -2647,7 +2704,7 @@
   }
 
   function syncModeFor(el, trNode) {
-    const mode = settings.displayMode || "bilingual";
+    const mode = settings.displayMode || "replace";
     let tr =
       trNode ||
       (el.dataset.pbtId &&
@@ -2666,7 +2723,12 @@
       if ((!t || t === "…" || t === "...") && tr) {
         t = tr.querySelector(".pbt-tr-text")?.textContent || "";
       }
-      if (!t || t === "…" || t === "...") return;
+      if (!t || t === "…" || t === "...") {
+        if (el.dataset.pbtId) {
+          document.querySelectorAll(`.pbt-tr[data-pbt-for="${CSS.escape(el.dataset.pbtId)}"]`).forEach((n) => n.remove());
+        }
+        return;
+      }
       el.dataset.pbtTrText = t;
 
       // 采样原文排版：若尚未换字，computed 仍是原文
@@ -2964,6 +3026,13 @@
   }
 
   function sweepLeftovers() {
+    if (isReplaceMode()) {
+      document.querySelectorAll(".pbt-tr").forEach((tr) => tr.remove());
+      document.querySelectorAll(".pbt-text-swap").forEach((el) => {
+        if (el.textContent.trim() === "…" || el.textContent.trim() === "...") restoreTextSwap(el);
+      });
+      return;
+    }
     document.querySelectorAll(".pbt-tr").forEach((tr) => {
       const t = tr.querySelector(".pbt-tr-text")?.textContent || "";
       if (t === "…" || t === "...") tr.remove();
@@ -3109,7 +3178,7 @@
     }
 
     async function worker() {
-      while (cursor < items.length && my === runId && translating) {
+      while (cursor < items.length && my === runId) {
         const start = cursor;
         cursor += size;
         const batch = items.slice(start, start + size);
@@ -3366,7 +3435,12 @@
         );
         clearInterval(hotWatch);
         hotWatch = 0;
-      } else if (ok > 0 && elapsed >= 8000 && document.querySelectorAll(".pbt-tr").length === 0) {
+      } else if (
+        ok > 0 &&
+        elapsed >= 8000 &&
+        !isReplaceMode() &&
+        document.querySelectorAll(".pbt-tr").length === 0
+      ) {
         toast(`已标记 ${ok} 段但未见译文节点，请刷新重试`, true, true);
         clearInterval(hotWatch);
         hotWatch = 0;
