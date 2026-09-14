@@ -15,7 +15,7 @@
   // URLs, emails, identifiers and paths: one token that is dotted / digit- or underscore-bearing
   // (README.md, v1), or two tokens joined by a slash (omacom / omarchy, CI/CD).
   const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|\S+\s*\/\s*\S+)$/i;
-  // One all-lowercase or ALL-CAPS token: dir names, handles, branches, LICENSE (bin, config, quattro, ryanrhughes).
+  // One all-lowercase or ALL-CAPS token; only an identifier when it names its own link target (see isPathLabel).
   const HANDLE = /^(?:[a-z][a-z-]*|[A-Z][A-Z-]+)$/;
   const CACHE_KEY = "pbt.segCache.v2";
   const CACHE_CAP = 2000;
@@ -86,12 +86,24 @@
     return { el: host, src, map, plain: plain.trim() };
   }
 
-  function needsTranslate(text) {
-    const letters = text.match(/\p{L}/gu) || [];
-    const t = text.trim();
-    if (letters.length < 2 || NOISE.test(t) || HANDLE.test(t)) return false;
+  function needsTranslate(u) {
+    const t = u.plain;
+    const letters = t.match(/\p{L}/gu) || [];
+    if (letters.length < 2 || NOISE.test(t) || isPathLabel(u.el, t)) return false;
     const re = TARGET_SCRIPT[settings.targetLang.slice(0, 2)];
     return !re || letters.filter((c) => re.test(c)).length / letters.length < 0.5;
+  }
+
+  /** `bin` → /tree/quattro/bin, `ryanrhughes` → /ryanrhughes: the label is the last path segment of its own link.
+   *  `edit` → ?action=edit and an href-less `hide` button are UI words and get translated. */
+  function isPathLabel(el, t) {
+    if (!HANDLE.test(t)) return false;
+    const a = el.matches("a[href]") ? el : el.querySelector("a[href]");
+    try {
+      return !!a && decodeURIComponent(new URL(a.href).pathname).split("/").filter(Boolean).pop()?.toLowerCase() === t.toLowerCase();
+    } catch {
+      return false;
+    }
   }
 
   // ponytail: orphan text next to block siblings gets a span wrapper (unwrapped on restore).
@@ -106,7 +118,7 @@
   function collect(root, out) {
     const push = (el) => {
       const u = serialize(el);
-      const ok = needsTranslate(u.plain) && u.plain.length <= MAX_HOST_CHARS;
+      const ok = needsTranslate(u) && u.plain.length <= MAX_HOST_CHARS;
       if (ok) out.push(u);
       return ok;
     };
@@ -321,13 +333,18 @@
 
   function paint(u, dst) {
     const { parts, seen } = parse(dst);
-    // model dropped an inline tag: keep the source rather than paint a half-structured block
-    if (!u.map.every((m, i) => m.keep || seen.has(i + 1))) return settle(u, "skip");
+    const nodes = [];
     const w = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT);
-    u.snap = [];
-    for (let n = w.nextNode(); n; n = w.nextNode()) u.snap.push([n, n.data]);
+    for (let n = w.nextNode(); n; n = w.nextNode()) nodes.push(n);
+    u.snap = nodes.map((n) => [n, n.data]);
     u.created = [];
-    write(u, u.el, parts);
+    if (u.map.every((m, i) => m.keep || seen.has(i + 1))) write(u, u.el, parts);
+    else {
+      // tags did not round-trip: plain translation into the longest text node, blank the rest (structure kept)
+      const live = nodes.filter((n) => n.data.trim() && !n.parentElement?.closest(`${KEEP},${SKIP}`));
+      const main = live.reduce((a, n) => (n.data.trim().length > (a?.data.trim().length || 0) ? n : a), null);
+      live.forEach((n) => (n.data = n === main ? stripTags(dst) : ""));
+    }
     u.el.dataset.pbtState = "ok";
     mo?.takeRecords();
   }
