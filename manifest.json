@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "双语网页",
   "short_name": "双语",
-  "version": "1.4.47",
+  "version": "1.4.48",
   "description": "一键整页替换翻译；DeepSeek / Cursor bridge。",
   "minimum_chrome_version": "116",
   "icons": {

@@ -463,62 +463,182 @@
     }
   }
 
-  const TR_CACHE_CAP = 800;
+  /* Global segment cache — LFU-lite (one-hit probation + light aging).
+     Upgrades the existing Map / requestBatch / trCache* path; not a parallel cache. */
+  const TR_CACHE_CAP = 4000;
+  const TR_CACHE_BYTES = 1536 * 1024; // ~1.5MB UTF-16 estimate
+  const TR_CACHE_PERSIST_MAX_LEN = 200;
+  const TR_CACHE_AGE_EVERY = 64;
+  const SEG_CACHE_KEY = "pbt.segCache.v1";
   let trCachePersistTimer = 0;
+  let trCacheInserts = 0;
 
-  function trCacheKey() {
-    return `pbt.trCache.${location.origin}${location.pathname}${location.search}`;
+  function engineId() {
+    const e = String(settings.engine || "deepseek").toLowerCase();
+    const eng = e === "bridge" ? "cursor" : e;
+    const model =
+      eng === "cursor"
+        ? settings.cursorModel || "composer-2.5-fast"
+        : settings.deepseekModel || "deepseek-flash";
+    return `${eng}:${model}`;
+  }
+
+  function normalizeCacheText(text) {
+    return String(text || "")
+      .normalize("NFKC")
+      .trim()
+      .replace(/\s+/g, " ");
+  }
+
+  function glossFp() {
+    if (!glossary.length) return "";
+    const s = glossary.map((x) => `${x.src}=${x.dst}`).join("|");
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  function cacheKey(text) {
+    return `auto\0${settings.targetLang}\0${engineId()}\0${glossFp()}\0${normalizeCacheText(text)}`;
+  }
+
+  function entryBytes(k, text) {
+    return (String(k).length + String(text || "").length) * 2 + 32;
+  }
+
+  function cacheGetText(key) {
+    const e = cache.get(key);
+    if (!e || typeof e.text !== "string") return null;
+    e.freq = (e.freq || 1) + 1;
+    e.lastAt = Date.now();
+    return e.text;
+  }
+
+  function cachePut(key, text) {
+    if (typeof text !== "string" || !text || text === "…") return;
+    const prev = cache.get(key);
+    if (prev) {
+      prev.text = text;
+      prev.freq = (prev.freq || 1) + 1;
+      prev.lastAt = Date.now();
+      prev.bytes = entryBytes(key, text);
+      return;
+    }
+    cache.set(key, {
+      text,
+      freq: 1,
+      lastAt: Date.now(),
+      bytes: entryBytes(key, text),
+    });
+    trCacheInserts += 1;
+    if (trCacheInserts % TR_CACHE_AGE_EVERY === 0) ageCacheFreq();
+  }
+
+  function ageCacheFreq() {
+    for (const e of cache.values()) {
+      e.freq = Math.max(1, Math.floor((e.freq || 1) / 2));
+    }
+  }
+
+  function cacheByteSize() {
+    let n = 0;
+    for (const e of cache.values()) n += e.bytes || 0;
+    return n;
+  }
+
+  /** Evict one: cold (freq==1) oldest first, else lowest freq then least-recent. */
+  function evictOne() {
+    if (!cache.size) return false;
+    let bestK = null;
+    let best = null;
+    for (const [k, e] of cache) {
+      if (!best) {
+        bestK = k;
+        best = e;
+        continue;
+      }
+      const ef = e.freq || 1;
+      const bf = best.freq || 1;
+      const el = e.lastAt || 0;
+      const bl = best.lastAt || 0;
+      if (ef === 1 && bf > 1) {
+        bestK = k;
+        best = e;
+      } else if (ef === 1 && bf === 1) {
+        if (el < bl) {
+          bestK = k;
+          best = e;
+        }
+      } else if (bf > 1 && (ef < bf || (ef === bf && el < bl))) {
+        bestK = k;
+        best = e;
+      }
+    }
+    if (bestK == null) return false;
+    cache.delete(bestK);
+    return true;
   }
 
   function trimCache() {
-    const over = cache.size - TR_CACHE_CAP;
-    if (over <= 0) return;
-    const drop = Array.from(cache.keys()).slice(0, over);
-    for (const k of drop) cache.delete(k);
+    while (cache.size > TR_CACHE_CAP || cacheByteSize() > TR_CACHE_BYTES) {
+      if (!evictOne()) break;
+    }
+  }
+
+  async function reclaimOldTrCacheKeys() {
+    // Only drop this page's legacy per-URL blob — never storage.get(null) from content
+    // (would pull API keys into the page world).
+    const legacy = `pbt.trCache.${location.origin}${location.pathname}${location.search}`;
+    try {
+      await chrome.storage.local.remove(legacy);
+    } catch { /* optional */ }
+    try {
+      await chrome.storage.session.remove(legacy);
+    } catch { /* optional */ }
   }
 
   async function loadTrCache() {
-    const key = trCacheKey();
-    const ingest = (obj) => {
-      if (!obj || typeof obj !== "object") return 0;
-      const entries = Object.entries(obj);
-      const slice = entries.length > TR_CACHE_CAP ? entries.slice(-TR_CACHE_CAP) : entries;
-      let n = 0;
-      for (const [k, v] of slice) {
-        if (typeof k === "string" && typeof v === "string" && !cache.has(k)) {
-          cache.set(k, v);
-          n += 1;
-        }
-      }
-      return n;
-    };
     try {
-      const data = await chrome.storage.session.get(key);
-      ingest(data[key]);
-    } catch { /* session optional */ }
-    // 同 URL 巩固：session 未命中时再读 local（跨内容脚本重注入）
-    try {
-      if (cache.size < 8) {
-        const data = await chrome.storage.local.get(key);
-        ingest(data[key]);
+      const data = await chrome.storage.local.get(SEG_CACHE_KEY);
+      const blob = data[SEG_CACHE_KEY];
+      if (!blob || typeof blob !== "object") {
+        await reclaimOldTrCacheKeys();
+        return;
       }
-    } catch { /* local optional */ }
+      const entries = Array.isArray(blob.entries) ? blob.entries : [];
+      for (const row of entries) {
+        if (!row || typeof row.k !== "string" || typeof row.t !== "string") continue;
+        if (cache.has(row.k)) continue;
+        cache.set(row.k, {
+          text: row.t,
+          freq: Math.max(1, Number(row.f) || 1),
+          lastAt: Number(row.a) || 0,
+          bytes: entryBytes(row.k, row.t),
+        });
+      }
+      trimCache();
+      await reclaimOldTrCacheKeys();
+    } catch { /* optional */ }
   }
 
   async function persistTrCacheNow() {
     trCachePersistTimer = 0;
     try {
       trimCache();
-      const obj = Object.fromEntries(cache);
-      const key = trCacheKey();
-      await chrome.storage.session.set({ [key]: obj });
-      // 双写 local：同 URL 反复译少打 API（配额内）
-      try {
-        await chrome.storage.local.set({ [key]: obj });
-      } catch { /* quota / local optional */ }
-    } catch {
-      /* session storage optional */
-    }
+      const entries = [];
+      for (const [k, e] of cache) {
+        if (!e || typeof e.text !== "string") continue;
+        const src = k.includes("\0") ? k.slice(k.lastIndexOf("\0") + 1) : "";
+        if (src.length > TR_CACHE_PERSIST_MAX_LEN || e.text.length > TR_CACHE_PERSIST_MAX_LEN) {
+          continue; // memory may keep long hits; durable store stays phrase-heavy
+        }
+        entries.push({ k, t: e.text, f: e.freq || 1, a: e.lastAt || 0 });
+      }
+      await chrome.storage.local.set({ [SEG_CACHE_KEY]: { v: 1, entries } });
+    } catch { /* quota / optional */ }
   }
 
   function schedulePersistTrCache() {
@@ -529,17 +649,14 @@
   }
 
   async function clearPageTrCache() {
+    // Lang change: drop memory; durable store is key-partitioned (do not wipe global).
     cache.clear();
     if (trCachePersistTimer) {
       clearTimeout(trCachePersistTimer);
       trCachePersistTimer = 0;
     }
-    const key = trCacheKey();
     try {
-      await chrome.storage.session.remove(key);
-    } catch { /* optional */ }
-    try {
-      await chrome.storage.local.remove(key);
+      await loadTrCache();
     } catch { /* optional */ }
   }
 
@@ -1864,11 +1981,6 @@
     return pruneAncestorBlocks(out);
   }
 
-  function cacheKey(text) {
-    const g = glossary.map((x) => `${x.src}=${x.dst}`).join("|");
-    return `${settings.targetLang}\0${g}\0${text}`;
-  }
-
   function ensureId(el) {
     if (!el.dataset.pbtId) el.dataset.pbtId = `p${++seq}`;
     return el.dataset.pbtId;
@@ -3173,10 +3285,11 @@
     const need = [];
     const have = [];
     for (const it of batch) {
-      const hit = cache.get(cacheKey(it.text));
+      const hit = cacheGetText(cacheKey(it.text));
       if (hit != null) have.push({ id: it.id, text: hit });
       else need.push(it);
     }
+    if (have.length) schedulePersistTrCache();
     if (!need.length) return have;
     const res = await runtimeSend({
       type: "PBT_BATCH",
@@ -3189,8 +3302,8 @@
     let wrote = false;
     for (const row of res.items || []) {
       const src = need.find((b) => b.id === row.id);
-      if (src) {
-        cache.set(cacheKey(src.text), row.text);
+      if (src && typeof row.text === "string" && row.text && row.text !== "…") {
+        cachePut(cacheKey(src.text), row.text);
         wrote = true;
       }
     }
