@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Omarchy — Beautiful, fun & approachable</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #100f0d; color: #cfc9bf;
+         font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 15px; line-height: 1.6; }
+  .shell { max-width: 420px; margin: 0 auto; padding: 24px 22px 60px; background: #16150f; }
+  h2 { font-size: 18px; color: #f2ede3; margin: 34px 0 14px; }
+  h3 { font-size: 16px; color: #e9e2d4; margin: 26px 0 10px; font-weight: 600; }
+  p { margin: 0 0 14px; }
+  code { background: #2a2722; padding: 1px 5px; border-radius: 4px; color: #d8cdaa; }
+  em { font-style: italic; color: #e6dfd0; }
+  a { color: #cfc9bf; }
+  hr { border: 0; border-top: 1px solid #2a2722; margin: 26px 0; }
+
+  /* News list: title + excerpt are spans inside one tall flex link */
+  .news a { display: flex; flex-direction: column; gap: 6px; text-decoration: none; margin-bottom: 26px; }
+  .news time { font-size: 13px; color: #8d8577; }
+  .news .title { font-size: 17px; color: #f2ede3; font-weight: 600; }
+  .news .excerpt { font-size: 14px; color: #b3ab9c;
+                   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  /* Collapsible section head: short heading in a row next to chevron chrome */
+  .section-head { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  .section-head h3 { margin: 0; }
+  .rowlink { display: flex; align-items: center; gap: 6px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <h2>Recent news</h2>
+  <section class="news">
+    <a href="/news/1">
+      <time>September 11, 2026</time>
+      <span class="title">Introducing Omarchy M</span>
+      <span class="excerpt">On September 11, 2026 Omarchy MApple made excellent hardware. They always have. But so did many others.</span>
+    </a>
+    <a href="/news/2">
+      <time>September 10, 2026</time>
+      <span class="title">Omacom Foundation hires Emir Beganović as Head of Infrastructure</span>
+      <span class="excerpt">On September 10, 2026 the Omacom Foundation hired Emir Beganović to lead infrastructure work across the project.</span>
+    </a>
+    <a href="/news/3">
+      <time>September 9, 2026</time>
+      <span class="title">DigitalOcean</span>
+      <span class="excerpt">On September 9, 2026 DigitalOcean joined the Omacom Foundation as a founding corporate sponsor.</span>
+    </a>
+  </section>
+  <p class="rowlink"><a href="/news">All the news</a> <span>&rarr;</span></p>
+
+  <hr>
+
+  <h2>Windows</h2>
+
+  <div class="card">
+    <div class="section-head">
+      <h3>Your Windows apps, right at home</h3>
+      <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" stroke="#888" fill="none"/></svg>
+    </div>
+    <p>Choose <em>Install &gt; Windows</em> from the Omarchy menu. Hardware virtualization brings near-native CPU performance for Office and everyday work, with a shared clipboard and a folder for moving files between Windows and Linux.</p>
+  </div>
+
+  <div class="card">
+    <h3>Bring your own Windows key</h3>
+    <p>Bring a Windows 11 Pro license valid for a VM. Run <code>omarchy windows key</code> to retrieve your machine's original key (this only works on Pro, not Home licenses).</p>
+  </div>
+
+  <div class="card">
+    <h3>For work, not gaming</h3>
+    <p>This setup has no GPU acceleration or passthrough. It is an ideal home for documents, spreadsheets and Windows-only work apps, but a poor fit for gaming or demanding graphics work.</p>
+  </div>
+
+  <div class="card">
+    <h3>Where the manual lives</h3>
+    <p>Read the <a href="/manual">Omarchy manual</a> before you install anything, then follow the setup steps in order.</p>
+  </div>
+
+  <p class="rowlink"><a href="/docs/windows">Set up Windows</a> <span>&rarr;</span></p>
+</div>
+</body>
+</html>

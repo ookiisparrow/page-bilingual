@@ -265,4 +265,29 @@ const PBT = {
     }
     return out.replace(/\s+/g, " ").trim();
   },
+
+  /** Structured failure log for agents / options export (no secrets). */
+  ERROR_LOG_KEY: "pbtErrorLog",
+  ERROR_LOG_CAP: 100,
+
+  classifyError(message) {
+    const m = String(message || "");
+    if (/Extension context invalidated/i.test(m)) return "extension_context_invalidated";
+    if (/未填写.*API Key|missing.*key|no api key/i.test(m)) return "auth_missing_key";
+    if (/insufficient\s*balance|余额不足/i.test(m)) return "auth_balance";
+    if (/agent login|not logged in|CURSOR_API_KEY|Authentication|Unauthorized|401/i.test(m))
+      return "auth_cli_or_key";
+    if (/Could not start Cursor CLI|cursor-agent|Install: curl/i.test(m)) return "bridge_cli_missing";
+    if (/Cursor CLI timed out|bridge.*超时|请求超时/i.test(m)) return "timeout";
+    if (/Failed to fetch|NetworkError|ERR_CONNECTION|ECONNREFUSED|网络/i.test(m)) return "network";
+    if (/429|rate.?limit|HTTP 429/i.test(m)) return "rate_limit";
+    if (/HTTP 5\d\d|502|503|504/i.test(m)) return "http_5xx";
+    if (/JSON|parse|没有返回 JSON/i.test(m)) return "parse_json";
+    if (/仍返回英文|未译成中文/i.test(m)) return "model_still_english";
+    if (/empty/i.test(m)) return "empty_collection";
+    if (/扩展后台超时|翻译引擎无响应/i.test(m)) return "background_timeout";
+    if (/Cursor bridge|Cursor CLI/i.test(m)) return "bridge_error";
+    if (/DeepSeek/i.test(m)) return "deepseek_error";
+    return "unknown";
+  },
 };
