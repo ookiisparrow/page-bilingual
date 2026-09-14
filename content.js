@@ -11,6 +11,9 @@
   const CHROME =
     "nav,header,footer,aside,form,time,cite,[rel='author'],[role='navigation'],[role='banner'],[role='contentinfo'],[role='complementary'],[role='search'],#mw-navigation,#mw-panel,#mw-head,#mw-page-base,#siteNotice,.vector-header,.vector-sitenotice,.vector-toc,#toc,.toc,.mw-portlet,.mw-editsection,.navbox,.vertical-navbox,.byline,.author,.breadcrumb,.pagination,.pager,.share,.social,.tags,.comment-meta,.cookie,.cookie-banner,#fbar,.fbar,#footcnt,#sfooter,#bottomads,.commit-tease,.js-details-container .flex-auto .text-small,.react-directory-commit-age,[data-testid='latest-commit-details'],[data-testid='latest-commit'],.Box-header .text-small,#onetrust-banner-sdk,#onetrust-consent-sdk,[id^='sp_message_container'],[id*='sp_message'],[class*='cookie-consent'],[class*='CookieConsent'],[id*='cookie-banner'],[class*='ConsentBanner'],[class*='privacy-gate'],[id*='privacy-gate'],[class*='PrivacyManager'],[data-testid*='consent']";
   const BLOCKS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,dt,dd,[role='heading'],[role='menuitem'],[role='menuitemcheckbox'],[role='menuitemradio'],[role='option'],[role='treeitem']";
+  // GitHub/GitLab 目录列表行：文件名、提交信息、时间列都是 chrome（LAYOUT A5）
+  const REPO_FILE_ROW =
+    ".react-directory-row,.react-directory-filename-column,.react-directory-filename-cell,.react-directory-truncate,.react-directory-commit-message,.react-directory-commit-age,[aria-labelledby='folders-and-files'],.js-navigation-item,[data-testid='latest-commit'],[data-testid='latest-commit-details'],[class*='LatestCommit-module'],.commit-tease,.tree-browser,.file-navigation";
   const MAIN_HINTS = [
     "article",
     "[role='main']",
@@ -654,6 +657,14 @@
         const s = getComputedStyle(n);
         const clamp = s.webkitLineClamp;
         const clamped = (clamp && clamp !== "none" && clamp !== "0") || /line-clamp/i.test(n.className || "");
+        // 行 chrome（不换行 flex 行 / 截断的文件名格）：放开 overflow 会把邻列顶开
+        const rowChrome =
+          (s.display.includes("flex") &&
+            s.flexWrap === "nowrap" &&
+            s.flexDirection !== "column" &&
+            s.flexDirection !== "column-reverse") ||
+          s.textOverflow === "ellipsis";
+        if (rowChrome) continue;
         if (clamped || s.overflow === "hidden" || s.overflowY === "hidden") {
           // 仅当可能裁到宿主下方兄弟时放宽（矮盒子 / line-clamp）
           if (clamped || n.clientHeight < 280 || (n.scrollHeight > n.clientHeight + 4)) {
@@ -1141,10 +1152,23 @@
       const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
       for (const el of nodes) {
         const sr = el.shadowRoot;
-        if (sr) out.push(sr);
+        // 宿主本身就是 SKIP（relative-time / time / code…）：里面的文案同样不该收
+        if (sr && !el.matches?.(SKIP_HARD) && !el.matches?.(SKIP)) out.push(sr);
       }
     } catch { /* ignore */ }
     return out;
+  }
+
+  /** closest()，但能跨 open shadow 边界上溯（自定义元素把文案放在 shadow 内） */
+  function closestAcrossShadow(el, sel) {
+    let n = el;
+    while (n && n.nodeType === 1) {
+      const hit = n.closest?.(sel);
+      if (hit) return hit;
+      const root = n.getRootNode?.();
+      n = root && root.host ? root.host : null;
+    }
+    return null;
   }
 
   function looksLikeUrl(text) {
@@ -1161,6 +1185,8 @@
     if (/^(yesterday|today|just now|now)$/i.test(t)) return true;
     if (/^\d+\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s*ago$/i.test(t)) return true;
     if (/^(a|an)\s+(minute|hour|day|week|month|year)\s+ago$/i.test(t)) return true;
+    if (/^(last|next|this)\s+(week|month|year)$/i.test(t)) return true;
+    if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s*\d{4}$/i.test(t)) return true;
     if (/^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}/i.test(t)) return true;
     if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(t)) return true;
     return false;
@@ -1198,12 +1224,19 @@
     if (!/github\.com$/i.test(host) && !/gitlab\./i.test(host)) return false;
     const t = String(text || "").trim();
     if (!t) return false;
-    if (el.closest("[aria-labelledby*='folder'], [data-testid*='file'], .react-directory-filename-column, .js-navigation-item, table[aria-labelledby]")) {
+    // 目录行整行都是元数据（文件名 / 提交信息 / 时间列）：A5 一律不译
+    if (closestAcrossShadow(el, REPO_FILE_ROW)) return true;
+    if (el.closest("[aria-labelledby*='folder'], [data-testid*='file'], table[aria-labelledby]")) {
       if (t.length <= 80 && !/\s{2,}/.test(t)) return true;
     }
     if (/^\.[A-Za-z0-9._-]+$/.test(t)) return true; // .github
     if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]*$/.test(t) && t.length < 64) return true;
     return false;
+  }
+
+  /** A5：文件列表元数据 / 路径 / 相对时间 —— 任何采集路径都不译 */
+  function isRowChromeText(el, text) {
+    return isRepoFileLabel(el, text) || looksLikeRelativeTime(text);
   }
 
   function isTightClip(el) {
@@ -1295,8 +1328,39 @@
     }
   }
 
+  /**
+   * 宿主占着「一行里的一个格子」：插兄弟必然抢同行宽度或撑高行（LAYOUT A1）。
+   * 两类：不换行的横向 flex 项（GitHub UnderlineNav）、单行高的表格/列表行内节点。
+   * 这类宿主只许原地换字，不许 after() 插 .pbt-tr。
+   */
+  function isRowLockedHost(el) {
+    if (!el || el.nodeType !== 1) return false;
+    try {
+      const p = el.parentElement;
+      if (p) {
+        const ps = getComputedStyle(p);
+        const rowFlex =
+          (ps.display.includes("flex") || ps.display.includes("grid")) &&
+          ps.flexDirection !== "column" &&
+          ps.flexDirection !== "column-reverse";
+        // nowrap：新兄弟换不了行，只能把容器固有宽度顶爆
+        if (rowFlex && ps.flexWrap === "nowrap" && !ps.display.includes("grid")) return true;
+      }
+      const row = el.closest("tr,[role='row']");
+      if (row) {
+        const cs = getComputedStyle(el);
+        const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 16) * 1.4;
+        if (row.getBoundingClientRect().height <= lh * 2.2) return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
   function isChipListItem(el) {
     // Google「还搜索了」类：父级横向 flex，多项短链
+    if (!el || el.nodeType !== 1) return false;
     const p = el.parentElement;
     if (!p) return false;
     try {
@@ -1648,7 +1712,8 @@
     } else if (!out.length) {
       out = collectLooseLatin(document.body);
     }
-    return out;
+    // 收尾统一否决站点行 chrome：散叶/合并父级等旁路不过 worth()，只有这里挡得住（A5）
+    return out.filter((b) => !isRowChromeText(b.el, b.text));
   }
 
   /** 是否「结构安全」：仅极小纯文本叶可 textContent；hero/大标题/有结构一律否 */
@@ -2222,6 +2287,9 @@
       if (lhNum == null) lhNum = 1.65;
       else if (lhNum < 1.5) lhNum = Math.min(1.7, Math.max(1.55, lhNum < 1.2 ? 1.65 : 1.55));
     }
+    // 行内格子宿主：抬行高/加外边距就是撑行，保持宿主原值（A1/A3）
+    const rowLocked = isRowLockedHost(el);
+    if (rowLocked) lhNum = unitlessLineHeight(cs, srcPx);
 
     // 字距：中文正文默认 0；宽 tracking 收束
     let ls = cs.letterSpacing;
@@ -2242,7 +2310,8 @@
     el.style.fontWeight = weight;
     if (!inheritColor) el.style.color = col;
     else el.style.removeProperty("color"); // 继承
-    el.style.lineHeight = String(Math.round(lhNum * 100) / 100);
+    if (lhNum != null) el.style.lineHeight = String(Math.round(lhNum * 100) / 100);
+    else el.style.removeProperty("line-height");
     if (ls && ls !== "normal") el.style.letterSpacing = ls;
     else el.style.letterSpacing = "0";
     el.style.wordBreak = mono ? "break-all" : "normal";
@@ -2265,7 +2334,7 @@
     try {
       const mt = parseFloat(cs.marginTop) || 0;
       const mb = parseFloat(cs.marginBottom) || 0;
-      if (role === "body" && mt + mb < srcPx * 0.35) {
+      if (!rowLocked && role === "body" && mt + mb < srcPx * 0.35) {
         if (mb < srcPx * 0.25) el.style.marginBottom = "0.55em";
       }
     } catch { /* ignore */ }
@@ -2606,6 +2675,11 @@
     translatedText = cleanTranslation(srcText, translatedText);
     if (state !== "fail" && state !== "pending" && sameLanguageAsSource(srcText, translatedText)) {
       return echoSkip(el, srcText);
+    }
+    // 行内格子宿主（不换行 flex 行 / 单行表格行）：只换字，禁止插兄弟抢行（A1）
+    if (!isPopupSurface(el) && isRowLockedHost(el)) {
+      clearAttached(el);
+      return attachPopupText(el, translatedText, state) ? "ok" : "skip";
     }
     // 已成功挂过且同文：禁止再叠一层 .pbt-tr
     if (el.dataset.pbtState === "ok" && el.dataset.pbtId && state === "ok") {
