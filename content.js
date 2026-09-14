@@ -13,7 +13,7 @@
   const BLOCKS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,dt,dd,[role='heading'],[role='menuitem'],[role='menuitemcheckbox'],[role='menuitemradio'],[role='option'],[role='treeitem']";
   // GitHub/GitLab 目录列表行：文件名、提交信息、时间列都是 chrome（LAYOUT A5）
   const REPO_FILE_ROW =
-    ".react-directory-row,.react-directory-filename-column,.react-directory-filename-cell,.react-directory-truncate,.react-directory-commit-message,.react-directory-commit-age,[aria-labelledby='folders-and-files'],.js-navigation-item,[data-testid='latest-commit'],[data-testid='latest-commit-details'],.commit-tease,.tree-browser,.file-navigation";
+    ".react-directory-row,.react-directory-filename-column,.react-directory-filename-cell,.react-directory-truncate,.react-directory-commit-message,.react-directory-commit-age,[aria-labelledby='folders-and-files'],.js-navigation-item,[data-testid='latest-commit'],[data-testid='latest-commit-details'],[class*='LatestCommit-module'],.commit-tease,.tree-browser,.file-navigation";
   const MAIN_HINTS = [
     "article",
     "[role='main']",
@@ -1096,10 +1096,23 @@
       const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
       for (const el of nodes) {
         const sr = el.shadowRoot;
-        if (sr) out.push(sr);
+        // 宿主本身就是 SKIP（relative-time / time / code…）：里面的文案同样不该收
+        if (sr && !el.matches?.(SKIP_HARD) && !el.matches?.(SKIP)) out.push(sr);
       }
     } catch { /* ignore */ }
     return out;
+  }
+
+  /** closest()，但能跨 open shadow 边界上溯（自定义元素把文案放在 shadow 内） */
+  function closestAcrossShadow(el, sel) {
+    let n = el;
+    while (n && n.nodeType === 1) {
+      const hit = n.closest?.(sel);
+      if (hit) return hit;
+      const root = n.getRootNode?.();
+      n = root && root.host ? root.host : null;
+    }
+    return null;
   }
 
   function looksLikeUrl(text) {
@@ -1116,6 +1129,8 @@
     if (/^(yesterday|today|just now|now)$/i.test(t)) return true;
     if (/^\d+\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s*ago$/i.test(t)) return true;
     if (/^(a|an)\s+(minute|hour|day|week|month|year)\s+ago$/i.test(t)) return true;
+    if (/^(last|next|this)\s+(week|month|year)$/i.test(t)) return true;
+    if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s*\d{4}$/i.test(t)) return true;
     if (/^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}/i.test(t)) return true;
     if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(t)) return true;
     return false;
@@ -1154,7 +1169,7 @@
     const t = String(text || "").trim();
     if (!t) return false;
     // 目录行整行都是元数据（文件名 / 提交信息 / 时间列）：A5 一律不译
-    if (el.closest(REPO_FILE_ROW)) return true;
+    if (closestAcrossShadow(el, REPO_FILE_ROW)) return true;
     if (el.closest("[aria-labelledby*='folder'], [data-testid*='file'], table[aria-labelledby]")) {
       if (t.length <= 80 && !/\s{2,}/.test(t)) return true;
     }
@@ -1289,6 +1304,7 @@
 
   function isChipListItem(el) {
     // Google「还搜索了」类：父级横向 flex，多项短链
+    if (!el || el.nodeType !== 1) return false;
     const p = el.parentElement;
     if (!p) return false;
     try {
