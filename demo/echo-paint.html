@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo + paint repro</title>
+<style>
+  body { margin: 0; font: 16px/1.55 Georgia, serif; color: #111; background: #fafafa; }
+  .shell { max-width: 720px; margin: 0 auto; padding: 24px 20px 80px; display: grid; grid-template-columns: 200px 1fr; gap: 28px; }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; }
+  nav.toc li { margin: 0 0 8px; }
+  nav.toc a { color: #0645ad; text-decoration: none; display: flex; gap: 8px; align-items: baseline; }
+  nav.toc .chev { color: #666; font-size: 12px; }
+  nav.toc .num { color: #666; font-variant-numeric: tabular-nums; min-width: 1.2em; }
+  article p { margin: 0 0 14px; }
+  article a { color: #0645ad; }
+  article b { font-weight: 700; }
+  .ids { font: 14px/1.4 ui-monospace, Menlo, monospace; margin-top: 28px; }
+  .ids li { margin: 6px 0; }
+  @media (max-width: 640px) { .shell { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="toc" aria-label="Contents">
+    <ol>
+      <li><a href="#h"><span class="chev">&gt;</span><span class="num">1</span><span class="label">History</span></a></li>
+      <li><a href="#t"><span class="chev">&gt;</span><span class="num">2</span><span class="label">Goal setting theory</span></a></li>
+      <li><a href="#p"><span class="chev">&gt;</span><span class="num">3</span><span class="label">In practice</span></a></li>
+    </ol>
+  </nav>
+  <article>
+    <h1>Goal setting</h1>
+    <!-- Person names + years: old min-cover echo discarded these -->
+    <p id="mace">Goal setting theory has been developed through both in the field and laboratory settings. Cecil Alec Mace carried out the first empirical studies in 1935.</p>
+    <p id="locke"><b>Locke and colleagues (1981)</b> examined the behavioral effects of goal-setting on the task of brainstorming. See also <a href="#x">Edwin A. Locke</a> for the later synthesis.</p>
+    <!-- Product-name dense (hanRatio can sit ~0.17) -->
+    <p id="nvim">Neovim is the default, with VSCode, Cursor, Zed, Sublime Text, Helix, Vim, and Emacs ready to install.</p>
+    <p id="win">Choose <em>Install &gt; Windows</em> from the Omarchy menu. Hardware virtualization brings near-native CPU performance for Office and everyday work.</p>
+    <ul class="ids">
+      <li>bin</li>
+      <li>agents/skills</li>
+      <li>omacom / omarchy</li>
+      <li>foundation@omarchy.org</li>
+      <li>manual/install.sh</li>
+    </ul>
+  </article>
+</div>
+</body>
+</html>

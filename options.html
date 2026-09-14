@@ -97,6 +97,17 @@
       <label for="excludeCss">额外跳过选择器</label>
       <input id="excludeCss" type="text" placeholder=".my-widget, #promo" />
 
+      <label>专有名词白名单</label>
+      <p class="hint">品牌与专名翻译时原样保留（Nike、Spotify、Windows、GitHub…）。人名靠启发式 + 划词「保留专名」成长。与页内共用同一列表，存在本地，上限约 400。</p>
+      <div id="pnBox" style="border:1px solid #d1d5db;border-radius:8px;padding:8px;max-height:180px;overflow:auto;background:#fafafa;margin-bottom:8px">
+        <div id="pnList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="pnAdd" type="text" placeholder="添加专名，如 Omarchy" style="flex:1;box-sizing:border-box;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font:inherit" />
+        <button id="pnAddBtn" type="button" style="margin-top:0">添加</button>
+      </div>
+      <p class="hint" id="pnCount"></p>
+
       <label class="check"><input type="checkbox" id="hoverEnabled" /> 悬停气泡（需按修饰键）</label>
       <label for="hoverKey">悬停修饰键</label>
       <select id="hoverKey">
@@ -131,6 +142,20 @@
 
       <button id="save" type="button">保存</button>
       <span id="saved"></span>
+
+      <section style="margin-top:28px;padding-top:20px;border-top:1px solid #e5e7eb">
+        <h2 style="font-size:16px;margin:0 0 8px">翻译失败日志</h2>
+        <p class="hint" style="margin-top:0">
+          供排查「翻译失败」：写入 <code>chrome.storage.local</code>（最多 100 条）。
+          若本机跑着 Cursor bridge，会额外镜像到 <code>~/.page-bilingual/error-log.jsonl</code>（或 <code>PBT_ERROR_LOG</code>）。
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px">
+          <button id="errRefresh" type="button" style="margin-top:0">刷新</button>
+          <button id="errCopy" type="button" style="margin-top:0;background:#374151">复制 JSON</button>
+          <button id="errClear" type="button" style="margin-top:0;background:#6b7280">清空</button>
+        </div>
+        <pre id="errLog" style="margin:0;max-height:280px;overflow:auto;background:#0b1220;color:#e5e7eb;padding:12px;border-radius:8px;font:12px/1.45 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word">（加载中…）</pre>
+      </section>
     </main>
     <script src="shared.js"></script>
     <script src="options.js"></script>

@@ -24,6 +24,63 @@ const PORT = Number(process.env.PBT_BRIDGE_PORT || 47821);
 const MODEL = process.env.PBT_MODEL || "composer-2.5-fast";
 const MAX_PARALLEL = Math.max(1, Number(process.env.PBT_PARALLEL || 2));
 const MOCK = process.argv.includes("--mock");
+const ERROR_LOG_PATH =
+  process.env.PBT_ERROR_LOG ||
+  path.join(os.homedir(), ".page-bilingual", "error-log.jsonl");
+const ERROR_LOG_CAP = 200;
+
+function ensureErrorLogDir() {
+  try {
+    fs.mkdirSync(path.dirname(ERROR_LOG_PATH), { recursive: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+function appendBridgeError(entry) {
+  ensureErrorLogDir();
+  const row = {
+    t: Date.now(),
+    ...entry,
+    via: entry?.via || "bridge",
+  };
+  try {
+    fs.appendFileSync(ERROR_LOG_PATH, JSON.stringify(row) + "\n", "utf8");
+  } catch (e) {
+    console.warn("[pbt-bridge] error log write failed", e?.message || e);
+  }
+  return row;
+}
+
+function readBridgeErrors(limit) {
+  try {
+    if (!fs.existsSync(ERROR_LOG_PATH)) return [];
+    const lines = fs.readFileSync(ERROR_LOG_PATH, "utf8").split(/\n+/).filter(Boolean);
+    const slice = lines.slice(-(limit || 80));
+    return slice
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return { t: 0, message: line, kind: "raw" };
+        }
+      })
+      .reverse();
+  } catch {
+    return [];
+  }
+}
+
+function trimBridgeErrorLog() {
+  try {
+    if (!fs.existsSync(ERROR_LOG_PATH)) return;
+    const lines = fs.readFileSync(ERROR_LOG_PATH, "utf8").split(/\n+/).filter(Boolean);
+    if (lines.length <= ERROR_LOG_CAP) return;
+    fs.writeFileSync(ERROR_LOG_PATH, lines.slice(-ERROR_LOG_CAP).join("\n") + "\n", "utf8");
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Limit parallel Cursor CLI calls (startup is expensive; 2 is a sweet spot). */
 let inflight = 0;
@@ -177,7 +234,17 @@ function runAgent(prompt, apiKey, modelOverride) {
       clearTimeout(timer);
       cleanup();
       if (code !== 0 && !stdout.trim()) {
-        reject(new Error(stderr.trim() || `Cursor CLI exited ${code}`));
+        const detail = stderr.trim() || `Cursor CLI exited ${code}`;
+        appendBridgeError({
+          kind: /login|logged in|CURSOR_API_KEY|auth/i.test(detail)
+            ? "auth_cli_or_key"
+            : "bridge_cli_exit",
+          message: detail.slice(0, 500),
+          stderr: stderr.slice(-800),
+          source: "runAgent",
+        });
+        trimBridgeErrorLog();
+        reject(new Error(detail));
         return;
       }
       resolve({ text: (stdout + "\n" + stderr).trim(), stdout, stderr });
@@ -229,7 +296,43 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === "GET" && req.url === "/health") {
-    json(res, 200, { ok: true, engine: "cursor-cli", model: MODEL, parallel: MAX_PARALLEL, bin: BIN });
+    json(res, 200, {
+      ok: true,
+      engine: "cursor-cli",
+      model: MODEL,
+      parallel: MAX_PARALLEL,
+      bin: BIN,
+      errorLog: ERROR_LOG_PATH,
+    });
+    return;
+  }
+
+  if (req.method === "GET" && (req.url === "/debug/errors" || req.url?.startsWith("/debug/errors?"))) {
+    const u = new URL(req.url, `http://${HOST}:${PORT}`);
+    const limit = Math.min(200, Math.max(1, Number(u.searchParams.get("limit") || 80)));
+    json(res, 200, { ok: true, path: ERROR_LOG_PATH, entries: readBridgeErrors(limit) });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/debug/log") {
+    try {
+      const body = await readBody(req);
+      const row = appendBridgeError({
+        kind: body.kind || "unknown",
+        message: String(body.message || "").slice(0, 500),
+        source: body.source || "extension",
+        engine: body.engine,
+        host: body.host,
+        itemCount: body.itemCount,
+        status: body.status,
+        t: body.t || Date.now(),
+        via: "extension-mirror",
+      });
+      trimBridgeErrorLog();
+      json(res, 200, { ok: true, entry: row, path: ERROR_LOG_PATH });
+    } catch (err) {
+      json(res, 400, { error: String(err.message || err) });
+    }
     return;
   }
 
@@ -285,7 +388,10 @@ const server = http.createServer(async (req, res) => {
         ],
       });
     } catch (err) {
-      json(res, 502, { error: { message: String(err.message || err) } });
+      const message = String(err.message || err);
+      appendBridgeError({ message, source: "v1/chat/completions" });
+      trimBridgeErrorLog();
+      json(res, 502, { error: { message } });
     }
     return;
   }
@@ -330,7 +436,10 @@ const server = http.createServer(async (req, res) => {
         items: items.map((x) => ({ id: x.id, text: byId.get(String(x.id)) ?? x.text })),
       });
     } catch (err) {
-      json(res, 502, { error: String(err.message || err) });
+      const message = String(err.message || err);
+      appendBridgeError({ message, source: "/translate" });
+      trimBridgeErrorLog();
+      json(res, 502, { error: message });
     }
     return;
   }
@@ -340,5 +449,6 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Page Bilingual Translate Cursor bridge  http://${HOST}:${PORT}${MOCK ? "  (mock)" : ""}`);
   console.log("Health: GET /health   Chat: POST /v1/chat/completions   Translate: POST /translate");
+  console.log(`Errors: GET /debug/errors   POST /debug/log   file=${ERROR_LOG_PATH}`);
   console.log(MOCK ? "Mock mode: no Cursor CLI calls." : `Uses Cursor Agent CLI bin=${BIN} model=${MODEL} parallel=${MAX_PARALLEL}`);
 });

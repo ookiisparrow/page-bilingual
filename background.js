@@ -77,6 +77,48 @@ function normalizeEngine(engine) {
   return "deepseek";
 }
 
+async function readErrorLog() {
+  const data = await chrome.storage.local.get([PBT.ERROR_LOG_KEY]);
+  const list = data[PBT.ERROR_LOG_KEY];
+  return Array.isArray(list) ? list : [];
+}
+
+async function appendErrorLog(entry) {
+  const row = {
+    t: Date.now(),
+    kind: PBT.classifyError(entry?.message),
+    message: String(entry?.message || "").slice(0, 400),
+    source: String(entry?.source || "background").slice(0, 40),
+    engine: String(entry?.engine || activeRoute || "").slice(0, 20),
+    host: String(entry?.host || "").slice(0, 120),
+    itemCount: Number(entry?.itemCount) || 0,
+    status: entry?.status != null ? Number(entry.status) || entry.status : undefined,
+  };
+  try {
+    const list = await readErrorLog();
+    list.push(row);
+    while (list.length > PBT.ERROR_LOG_CAP) list.shift();
+    await chrome.storage.local.set({ [PBT.ERROR_LOG_KEY]: list });
+  } catch (e) {
+    console.warn("[pbt] error log write failed", e);
+  }
+  // Best-effort mirror to local Cursor bridge dump (agents can read the file).
+  try {
+    const s = await PBT.loadAll();
+    const base = String(s.cursorApiUrl || PBT.DEFAULTS.cursorApiUrl || "")
+      .replace(/\/v1\/chat\/completions\/?$/i, "")
+      .replace(/\/$/, "");
+    if (base) {
+      fetch(`${base}/debug/log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(row),
+      }).catch(() => {});
+    }
+  } catch (_) { /* bridge optional */ }
+  return row;
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg?.type === "PBT_HAS_KEY") {
     PBT.loadAll()
@@ -92,10 +134,48 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
       .catch((err) => reply({ ok: false, error: String(err.message || err) }));
     return true;
   }
+  if (msg?.type === "PBT_GET_ERROR_LOG") {
+    readErrorLog()
+      .then((entries) => reply({ ok: true, entries }))
+      .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (msg?.type === "PBT_CLEAR_ERROR_LOG") {
+    chrome.storage.local
+      .set({ [PBT.ERROR_LOG_KEY]: [] })
+      .then(() => reply({ ok: true }))
+      .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (msg?.type === "PBT_LOG_ERROR") {
+    appendErrorLog({
+      message: msg.message,
+      source: msg.source || "content",
+      engine: msg.engine || activeRoute,
+      host: msg.host,
+      itemCount: msg.itemCount,
+      status: msg.status,
+    })
+      .then((row) => reply({ ok: true, entry: row }))
+      .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
   if (msg?.type !== "PBT_BATCH") return;
-  translateBatch(msg.items || [], msg.targetLang, msg.glossary || [], msg.page || {})
-    .then((items) => reply({ ok: true, items, route: activeRoute }))
-    .catch((err) => reply({ ok: false, error: String(err.message || err) }));
+  const items = msg.items || [];
+  const page = msg.page || {};
+  translateBatch(items, msg.targetLang, msg.glossary || [], page, msg.properNouns || [])
+    .then((out) => reply({ ok: true, items: out, route: activeRoute }))
+    .catch((err) => {
+      const message = String(err.message || err);
+      appendErrorLog({
+        message,
+        source: "PBT_BATCH",
+        engine: activeRoute,
+        host: page.host,
+        itemCount: items.length,
+        status: err.status,
+      }).finally(() => reply({ ok: false, error: message }));
+    });
   return true;
 });
 
@@ -152,11 +232,23 @@ function rowText(r) {
 }
 
 
-function buildPrompt(targetLang, items, glossary, page) {
+function buildPrompt(targetLang, items, glossary, page, properNouns) {
   const gloss =
     !glossary?.length
       ? ""
       : "固定术语（优先）:\n" + glossary.map((g) => `- ${g.src} => ${g.dst}`).join("\n") + "\n";
+  const pnList = Array.isArray(properNouns)
+    ? properNouns.map((t) => String(t || "").trim()).filter(Boolean)
+    : [];
+  const pn =
+    !pnList.length
+      ? ""
+      : "专有名词白名单（品牌/产品/人名等，原样保留，勿翻译、勿音译）:\n" +
+        pnList
+          .slice(0, 80)
+          .map((t) => `- ${t}`)
+          .join("\n") +
+        "\n";
   const where = [page?.host, page?.title].filter(Boolean).join(" — ") || "";
   const zh = /^zh\b/i.test(targetLang);
   return (
@@ -164,10 +256,12 @@ function buildPrompt(targetLang, items, glossary, page) {
     (zh
       ? "译文必须是中文，禁止原样返回英文，禁止中英混抄整句。\n"
       : `Output language must be ${targetLang}, not the source language.\n`) +
-    "专有名词、代码、数字可保留。\n" +
+    "人名与品牌名必须原样保留（勿翻译、勿音译），即使未出现在白名单中；例如 Tim Cook、Nike、Spotify。\n" +
+    "专有名词、代码、数字可保留。白名单中的词必须原样保留。\n" +
     `只输出 JSON 数组：[{"id":"...","text":"译文"}]。id/顺序/数量必须与输入一致。\n` +
     (where ? `页面: ${where}\n` : "") +
     gloss +
+    pn +
     `Items: ${JSON.stringify(items.map((x) => ({ id: String(x.id), text: String(x.text ?? "") })))}`
   );
 }
@@ -221,9 +315,9 @@ async function chatCompletionsOnce(s, items, glossary, page, cfg) {
     {
       role: "system",
       content:
-        "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。",
+        "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。人名与品牌名一律原样保留，禁止翻译或音译。",
     },
-    { role: "user", content: buildPrompt(s.targetLang, items, glossary, page) },
+    { role: "user", content: buildPrompt(s.targetLang, items, glossary, page, s.properNouns) },
   ];
   async function call(body) {
     const headers = { "Content-Type": "application/json" };
@@ -337,10 +431,11 @@ async function translateHttp(s, items, glossary, page, depth, onceFn, failLabel)
   throw lastErr || new Error(failLabel || "翻译失败");
 }
 
-async function translateBatch(items, targetLang, glossary, page) {
+async function translateBatch(items, targetLang, glossary, page, properNouns) {
   const s = await PBT.loadAll();
   if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string") s.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;
   s.targetLang = targetLang || s.targetLang;
+  s.properNouns = Array.isArray(properNouns) ? properNouns : [];
   if (!items.length) return [];
 
   const engine = normalizeEngine(s.engine);

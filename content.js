@@ -11,6 +11,9 @@
   const CHROME =
     "nav,header,footer,aside,form,time,cite,[rel='author'],[role='navigation'],[role='banner'],[role='contentinfo'],[role='complementary'],[role='search'],#mw-navigation,#mw-panel,#mw-head,#mw-page-base,#siteNotice,.vector-header,.vector-sitenotice,.vector-toc,#toc,.toc,.mw-portlet,.mw-editsection,.navbox,.vertical-navbox,.byline,.author,.breadcrumb,.pagination,.pager,.share,.social,.tags,.comment-meta,.cookie,.cookie-banner,#fbar,.fbar,#footcnt,#sfooter,#bottomads,.commit-tease,.js-details-container .flex-auto .text-small,.react-directory-commit-age,[data-testid='latest-commit-details'],[data-testid='latest-commit'],.Box-header .text-small,#onetrust-banner-sdk,#onetrust-consent-sdk,[id^='sp_message_container'],[id*='sp_message'],[class*='cookie-consent'],[class*='CookieConsent'],[id*='cookie-banner'],[class*='ConsentBanner'],[class*='privacy-gate'],[id*='privacy-gate'],[class*='PrivacyManager'],[data-testid*='consent']";
   const BLOCKS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,dt,dd,[role='heading'],[role='menuitem'],[role='menuitemcheckbox'],[role='menuitemradio'],[role='option'],[role='treeitem']";
+  // GitHub/GitLab 目录列表行：文件名、提交信息、时间列都是 chrome（LAYOUT A5）
+  const REPO_FILE_ROW =
+    ".react-directory-row,.react-directory-filename-column,.react-directory-filename-cell,.react-directory-truncate,.react-directory-commit-message,.react-directory-commit-age,[aria-labelledby='folders-and-files'],.js-navigation-item,[data-testid='latest-commit'],[data-testid='latest-commit-details'],[class*='LatestCommit-module'],.commit-tease,.tree-browser,.file-navigation";
   const MAIN_HINTS = [
     "article",
     "[role='main']",
@@ -47,6 +50,9 @@
   const cache = new Map();
   let settings = { ...PBT.DEFAULTS, displayMode: "replace", scope: "full" };
   let glossary = [];
+  /** Global proper-noun whitelist (chrome.storage.local); complements page glossary. */
+  let properNounStore = { seeded: false, terms: {} };
+  let properNounList = [];
   let translated = false;
   let translating = false; // run in progress; FAB 译→原 only after first ok
   let hoverEl = null;
@@ -75,6 +81,9 @@
   function coldWorkerCount() {
     return isCursorEngine() ? PBT_COLD_WORKERS_CURSOR : PBT_COLD_WORKERS;
   }
+  function isReplaceMode() {
+    return (settings.displayMode || "replace") === "replace";
+  }
 
 
   const ui = { host: null, shadow: null };
@@ -83,6 +92,7 @@
     settings = s;
     applyStyle();
     glossary = await loadGlossary();
+    await loadProperNouns();
     await loadTrCache();
     mountUi();
     // 全局翻译开关：新页面自动开译
@@ -101,10 +111,13 @@
   });
   chrome.storage.onChanged.addListener((chg, area) => {
     if (area !== "local") return;
+    if (Object.prototype.hasOwnProperty.call(chg, PBT.PN_STORE_KEY)) {
+      applyProperNounStore(chg[PBT.PN_STORE_KEY].newValue);
+    }
     const langChanged = Object.prototype.hasOwnProperty.call(chg, "targetLang");
     const serviceChanged = Object.prototype.hasOwnProperty.call(chg, "serviceOn");
     for (const [k, v] of Object.entries(chg)) {
-      if (PBT.SECRET_KEYS.includes(k)) continue;
+      if (PBT.SECRET_KEYS.includes(k) || k === PBT.PN_STORE_KEY) continue;
       settings[k] = v.newValue;
     }
     applyStyle();
@@ -144,9 +157,9 @@
   function isSettledPbt(el) {
     if (!el) return true;
     const st = el.dataset?.pbtState;
-    if (st === "ok" || st === "skip" || st === "pending" || st === "queued" || st === "fail") return true;
+    if (st === "ok" || st === "skip" || st === "pending" || st === "queued") return true;
     if (el.classList?.contains("pbt-skip") || el.classList?.contains("pbt-host") || el.classList?.contains("pbt-text-swap")) return true;
-    if (el.nextElementSibling?.classList?.contains("pbt-tr")) return true;
+    if (!isReplaceMode() && el.nextElementSibling?.classList?.contains("pbt-tr")) return true;
     return false;
   }
 
@@ -373,17 +386,26 @@
     return out;
   }
 
-  /** 漏译扫描：replace/serviceOn 全页未 settled；否则视口。尊重 skip/same-lang */
+  /** 漏译扫描：replace 用整页 collect 重扫 fail/未收块；宽扫补 loose + same-lang 兄弟 */
   function collectMissedVisible() {
     const root = document.body;
     if (!root) return [];
-    const wide = isReplaceFull() || settings.serviceOn;
-    const all = collectNewBlocks(root).filter((b) => !isSettledPbt(b.el));
+    const wide = isReplaceMode() || isReplaceFull() || settings.serviceOn;
+    const raw = isReplaceMode() ? collect("full") : collectNewBlocks(root);
+    const all = raw.filter((b) => {
+      if (!b?.el || b.el.classList?.contains("pbt-skip")) return false;
+      const st = b.el.dataset?.pbtState;
+      if (st === "ok" || st === "skip" || st === "pending") return false;
+      if (st === "queued") return !translating;
+      if (st === "fail") return true;
+      if (b.el.classList.contains("pbt-host") || b.el.classList.contains("pbt-text-swap")) return false;
+      return true;
+    });
     if (wide) {
       const seen = new Set(all.map((b) => b.el));
-      // 首轮 collectLooseLatin 有上限，长页尾部只能靠补扫接力
+      // 首轮 collectLooseLatin 有上限，长页尾部只能靠补扫接力；same-lang 钉死项给一次重试
       for (const b of [...collectLooseLatin(root), ...reclaimSameLangSiblings(root)]) {
-        if (seen.has(b.el)) continue;
+        if (!b?.el || seen.has(b.el) || isSettledPbt(b.el)) continue;
         seen.add(b.el);
         all.push(b);
       }
@@ -495,62 +517,253 @@
     }
   }
 
-  const TR_CACHE_CAP = 800;
-  let trCachePersistTimer = 0;
+  function applyProperNounStore(raw) {
+    properNounStore = PBT.pnEnsureStore(raw);
+    properNounList = PBT.pnTermList(properNounStore);
+  }
 
-  function trCacheKey() {
-    return `pbt.trCache.${location.origin}${location.pathname}${location.search}`;
+  async function loadProperNouns() {
+    try {
+      properNounStore = await PBT.pnLoad();
+      properNounList = PBT.pnTermList(properNounStore);
+    } catch {
+      applyProperNounStore(null);
+    }
+  }
+
+  function touchProperNounsInText(text) {
+    const s = String(text || "");
+    if (!s || !properNounList.length) return false;
+    let touched = false;
+    const now = Date.now();
+    for (const term of properNounList) {
+      const key = PBT.pnNormKey(term);
+      const entry = properNounStore.terms[key];
+      if (!entry) continue;
+      const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
+      if (re.test(s)) {
+        entry.lastAt = now;
+        touched = true;
+      }
+    }
+    return touched;
+  }
+
+  async function persistProperNounsSoon() {
+    try {
+      await PBT.pnSave(properNounStore);
+    } catch {
+      /* local optional */
+    }
+  }
+
+  /**
+   * Glossary rows for the API: page pins + identity rows for whitelist brands
+   * and heuristic person names present in the batch (keep as-is).
+   */
+  function glossaryWithProperNouns(batchTexts) {
+    const out = glossary.map((g) => ({ src: g.src, dst: g.dst }));
+    const seen = new Set(out.map((g) => PBT.pnNormKey(g.src)));
+    const blob = (batchTexts || []).join("\n");
+    const preserve = PBT.pnMergeBatchPreserve(batchTexts, properNounList);
+    for (const term of preserve) {
+      const key = PBT.pnNormKey(term);
+      if (!key || seen.has(key)) continue;
+      const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
+      if (!re.test(blob)) continue;
+      out.push({ src: term, dst: term });
+      seen.add(key);
+    }
+    return out;
+  }
+
+  /** Whitelist + heuristic person names for one src/dst pair (echo / restore). */
+  function preserveTermsForPair(src, dst) {
+    return PBT.pnUniqueTerms([
+      properNounList,
+      PBT.pnDetectPersonNames(src),
+      PBT.pnDetectPersonNames(dst),
+    ]);
+  }
+
+  /* Global segment cache — LFU-lite (one-hit probation + light aging).
+     Upgrades the existing Map / requestBatch / trCache* path; not a parallel cache. */
+  const TR_CACHE_CAP = 4000;
+  const TR_CACHE_BYTES = 1536 * 1024; // ~1.5MB UTF-16 estimate
+  const TR_CACHE_PERSIST_MAX_LEN = 200;
+  const TR_CACHE_AGE_EVERY = 64;
+  const SEG_CACHE_KEY = "pbt.segCache.v1";
+  let trCachePersistTimer = 0;
+  let trCacheInserts = 0;
+
+  function engineId() {
+    const e = String(settings.engine || "deepseek").toLowerCase();
+    const eng = e === "bridge" ? "cursor" : e;
+    const model =
+      eng === "cursor"
+        ? settings.cursorModel || "composer-2.5-fast"
+        : settings.deepseekModel || "deepseek-flash";
+    return `${eng}:${model}`;
+  }
+
+  function normalizeCacheText(text) {
+    return String(text || "")
+      .normalize("NFKC")
+      .trim()
+      .replace(/\s+/g, " ");
+  }
+
+  function glossFp() {
+    if (!glossary.length) return "";
+    const s = glossary.map((x) => `${x.src}=${x.dst}`).join("|");
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  function cacheKey(text) {
+    return `auto\0${settings.targetLang}\0${engineId()}\0${glossFp()}\0${normalizeCacheText(text)}`;
+  }
+
+  function entryBytes(k, text) {
+    return (String(k).length + String(text || "").length) * 2 + 32;
+  }
+
+  function cacheGetText(key) {
+    const e = cache.get(key);
+    if (!e || typeof e.text !== "string") return null;
+    e.freq = (e.freq || 1) + 1;
+    e.lastAt = Date.now();
+    return e.text;
+  }
+
+  function cachePut(key, text) {
+    if (typeof text !== "string" || !text || text === "…") return;
+    const prev = cache.get(key);
+    if (prev) {
+      prev.text = text;
+      prev.freq = (prev.freq || 1) + 1;
+      prev.lastAt = Date.now();
+      prev.bytes = entryBytes(key, text);
+      return;
+    }
+    cache.set(key, {
+      text,
+      freq: 1,
+      lastAt: Date.now(),
+      bytes: entryBytes(key, text),
+    });
+    trCacheInserts += 1;
+    if (trCacheInserts % TR_CACHE_AGE_EVERY === 0) ageCacheFreq();
+  }
+
+  function ageCacheFreq() {
+    for (const e of cache.values()) {
+      e.freq = Math.max(1, Math.floor((e.freq || 1) / 2));
+    }
+  }
+
+  function cacheByteSize() {
+    let n = 0;
+    for (const e of cache.values()) n += e.bytes || 0;
+    return n;
+  }
+
+  /** Evict one: cold (freq==1) oldest first, else lowest freq then least-recent. */
+  function evictOne() {
+    if (!cache.size) return false;
+    let bestK = null;
+    let best = null;
+    for (const [k, e] of cache) {
+      if (!best) {
+        bestK = k;
+        best = e;
+        continue;
+      }
+      const ef = e.freq || 1;
+      const bf = best.freq || 1;
+      const el = e.lastAt || 0;
+      const bl = best.lastAt || 0;
+      if (ef === 1 && bf > 1) {
+        bestK = k;
+        best = e;
+      } else if (ef === 1 && bf === 1) {
+        if (el < bl) {
+          bestK = k;
+          best = e;
+        }
+      } else if (bf > 1 && (ef < bf || (ef === bf && el < bl))) {
+        bestK = k;
+        best = e;
+      }
+    }
+    if (bestK == null) return false;
+    cache.delete(bestK);
+    return true;
   }
 
   function trimCache() {
-    const over = cache.size - TR_CACHE_CAP;
-    if (over <= 0) return;
-    const drop = Array.from(cache.keys()).slice(0, over);
-    for (const k of drop) cache.delete(k);
+    while (cache.size > TR_CACHE_CAP || cacheByteSize() > TR_CACHE_BYTES) {
+      if (!evictOne()) break;
+    }
+  }
+
+  async function reclaimOldTrCacheKeys() {
+    // Only drop this page's legacy per-URL blob — never storage.get(null) from content
+    // (would pull API keys into the page world).
+    const legacy = `pbt.trCache.${location.origin}${location.pathname}${location.search}`;
+    try {
+      await chrome.storage.local.remove(legacy);
+    } catch { /* optional */ }
+    try {
+      await chrome.storage.session.remove(legacy);
+    } catch { /* optional */ }
   }
 
   async function loadTrCache() {
-    const key = trCacheKey();
-    const ingest = (obj) => {
-      if (!obj || typeof obj !== "object") return 0;
-      const entries = Object.entries(obj);
-      const slice = entries.length > TR_CACHE_CAP ? entries.slice(-TR_CACHE_CAP) : entries;
-      let n = 0;
-      for (const [k, v] of slice) {
-        if (typeof k === "string" && typeof v === "string" && !cache.has(k)) {
-          cache.set(k, v);
-          n += 1;
-        }
-      }
-      return n;
-    };
     try {
-      const data = await chrome.storage.session.get(key);
-      ingest(data[key]);
-    } catch { /* session optional */ }
-    // 同 URL 巩固：session 未命中时再读 local（跨内容脚本重注入）
-    try {
-      if (cache.size < 8) {
-        const data = await chrome.storage.local.get(key);
-        ingest(data[key]);
+      const data = await chrome.storage.local.get(SEG_CACHE_KEY);
+      const blob = data[SEG_CACHE_KEY];
+      if (!blob || typeof blob !== "object") {
+        await reclaimOldTrCacheKeys();
+        return;
       }
-    } catch { /* local optional */ }
+      const entries = Array.isArray(blob.entries) ? blob.entries : [];
+      for (const row of entries) {
+        if (!row || typeof row.k !== "string" || typeof row.t !== "string") continue;
+        if (cache.has(row.k)) continue;
+        cache.set(row.k, {
+          text: row.t,
+          freq: Math.max(1, Number(row.f) || 1),
+          lastAt: Number(row.a) || 0,
+          bytes: entryBytes(row.k, row.t),
+        });
+      }
+      trimCache();
+      await reclaimOldTrCacheKeys();
+    } catch { /* optional */ }
   }
 
   async function persistTrCacheNow() {
     trCachePersistTimer = 0;
     try {
       trimCache();
-      const obj = Object.fromEntries(cache);
-      const key = trCacheKey();
-      await chrome.storage.session.set({ [key]: obj });
-      // 双写 local：同 URL 反复译少打 API（配额内）
-      try {
-        await chrome.storage.local.set({ [key]: obj });
-      } catch { /* quota / local optional */ }
-    } catch {
-      /* session storage optional */
-    }
+      const entries = [];
+      for (const [k, e] of cache) {
+        if (!e || typeof e.text !== "string") continue;
+        const src = k.includes("\0") ? k.slice(k.lastIndexOf("\0") + 1) : "";
+        if (src.length > TR_CACHE_PERSIST_MAX_LEN || e.text.length > TR_CACHE_PERSIST_MAX_LEN) {
+          continue; // memory may keep long hits; durable store stays phrase-heavy
+        }
+        entries.push({ k, t: e.text, f: e.freq || 1, a: e.lastAt || 0 });
+      }
+      await chrome.storage.local.set({ [SEG_CACHE_KEY]: { v: 1, entries } });
+    } catch { /* quota / optional */ }
   }
 
   function schedulePersistTrCache() {
@@ -561,17 +774,14 @@
   }
 
   async function clearPageTrCache() {
+    // Lang change: drop memory; durable store is key-partitioned (do not wipe global).
     cache.clear();
     if (trCachePersistTimer) {
       clearTimeout(trCachePersistTimer);
       trCachePersistTimer = 0;
     }
-    const key = trCacheKey();
     try {
-      await chrome.storage.session.remove(key);
-    } catch { /* optional */ }
-    try {
-      await chrome.storage.local.remove(key);
+      await loadTrCache();
     } catch { /* optional */ }
   }
 
@@ -639,7 +849,7 @@
     const text = textOf(el);
     if (!needsTranslate(text) || text.length < 2 || text.length > 200) return false;
     if (el.querySelector?.(BLOCKS)) return false;
-    if (looksLikeUrl(text) || looksLikeIdentifier(text)) return false;
+    if (looksLikeUrl(text) || looksLikeEmail(text) || looksLikeIdentifier(text)) return false;
     return true;
   }
 
@@ -660,7 +870,7 @@
     const maxLen = inPopup ? 160 : 120;
     if (!needsTranslate(text) || text.length < minLen || text.length > maxLen) return false;
     if (el.querySelector?.(BLOCKS)) return false;
-    if (looksLikeUrl(text) || looksLikeIdentifier(text)) return false;
+    if (looksLikeUrl(text) || looksLikeEmail(text) || looksLikeIdentifier(text)) return false;
     return true;
   }
 
@@ -719,6 +929,14 @@
         const s = getComputedStyle(n);
         const clamp = s.webkitLineClamp;
         const clamped = (clamp && clamp !== "none" && clamp !== "0") || /line-clamp/i.test(n.className || "");
+        // 行 chrome（不换行 flex 行 / 截断的文件名格）：放开 overflow 会把邻列顶开
+        const rowChrome =
+          (s.display.includes("flex") &&
+            s.flexWrap === "nowrap" &&
+            s.flexDirection !== "column" &&
+            s.flexDirection !== "column-reverse") ||
+          s.textOverflow === "ellipsis";
+        if (rowChrome) continue;
         if (clamped || s.overflow === "hidden" || s.overflowY === "hidden") {
           // 仅当可能裁到宿主下方兄弟时放宽（矮盒子 / line-clamp）
           if (clamped || n.clientHeight < 280 || (n.scrollHeight > n.clientHeight + 4)) {
@@ -1039,13 +1257,58 @@
   }
 
 
+  /** 统计目标语脚本字符数（汉/假名/韩文） */
+  function targetScriptCount(text, lang) {
+    const t = String(text || "");
+    if (/^zh\b/i.test(lang)) return (t.match(/[\u4e00-\u9fff]/g) || []).length;
+    if (/^ja\b/i.test(lang)) return (t.match(/[\u3040-\u30ff]/g) || []).length;
+    if (/^ko\b/i.test(lang)) return (t.match(/[\uac00-\ud7af]/g) || []).length;
+    if (/^en\b/i.test(lang)) return (t.match(/[A-Za-z\u00C0-\u024F]/g) || []).length;
+    return 0;
+  }
+
+  /**
+   * 译文带来了原文没有的目标语脚本 → 真译文，绝不当回声。
+   * 专名/年份留拉丁时 hanRatio 可低至 ~0.15；用「绝对字数 OR 比例」双门槛。
+   */
+  function carriesTargetScript(src, dst) {
+    const lang = String(settings.targetLang || "zh-CN");
+    if (/^zh\b/i.test(lang)) {
+      if (hanRatio(src) >= 0.1) return false;
+      const han = targetScriptCount(dst, lang);
+      // ≥2 汉字且原文几乎无汉 → 真中译（含 Neovim/VSCode 堆专名的短句）
+      if (han >= 2) return true;
+      return hanRatio(dst) >= 0.15;
+    }
+    if (/^ja\b/i.test(lang)) {
+      const n = targetScriptCount(dst, lang);
+      return n >= 2 && targetScriptCount(src, lang) === 0;
+    }
+    if (/^ko\b/i.test(lang)) {
+      const n = targetScriptCount(dst, lang);
+      return n >= 2 && targetScriptCount(src, lang) === 0;
+    }
+    if (/^en\b/i.test(lang)) return looksAlreadyEnglish(dst) && !looksAlreadyEnglish(src);
+    return false;
+  }
+
   /**
    * 译文与原文同语 / 近回声 / 目标中文却仍外文主导：勿挂载。
    * true → 应 skip attach（markSkip same-lang）。
+   * 白名单品牌 / 启发式人名不计入拉丁词集；与 Han 目标脚本门互补，
+   * 避免「中文 + Tim Cook / Nike」被当成回声丢掉。
+   *
+   * 禁止用 min(|src|,|dst|) 做覆盖率：中译保留专名时 dst Latin ⊂ src Latin，
+   * inter/min → 1.0，会把正确译文当回声丢掉（维基人名/年份尤甚）。
    */
   function nearEchoOverlap(src, dst) {
-    const s = String(src || "").trim().toLowerCase();
-    const d = String(dst || "").trim().toLowerCase();
+    // 目标语脚本门：有实质汉/假名/韩文则永不判回声；人名品牌经 pnStripForEcho 剥离
+    if (carriesTargetScript(src, dst)) return false;
+    const keep = preserveTermsForPair(src, dst);
+    const s0 = PBT.pnStripForEcho(src, keep);
+    const d0 = PBT.pnStripForEcho(dst, keep);
+    const s = String(s0 || "").trim().toLowerCase();
+    const d = String(d0 || "").trim().toLowerCase();
     if (!s || !d) return false;
     if (s.length >= 8 && d.length >= 8) {
       if (s.includes(d) || d.includes(s)) {
@@ -1062,9 +1325,8 @@
       let inter = 0;
       for (const w of setD) if (setS.has(w)) inter += 1;
       const uni = setS.size + setD.size - inter;
+      // 仅 Jaccard：子集专名不会抬到阈值；真英译英两边词集接近才会命中
       if (uni && inter / uni >= 0.82) return true;
-      const cover = inter / Math.min(setS.size, setD.size);
-      if (cover >= 0.9) return true;
     }
     const sn = s.replace(/\s+/g, "");
     const dn = d.replace(/\s+/g, "");
@@ -1078,7 +1340,8 @@
       const gd = grams(dn);
       let inter = 0;
       for (const g of gd) if (gs.has(g)) inter += 1;
-      const denom = Math.min(gs.size, gd.size);
+      // 用 max 分母，避免短 dst 被 min 抬成伪高覆盖
+      const denom = Math.max(gs.size, gd.size);
       if (denom && inter / denom >= 0.85) {
         const lenRatio = Math.min(sn.length, dn.length) / Math.max(sn.length, dn.length);
         if (lenRatio >= 0.7) return true;
@@ -1127,6 +1390,50 @@
     return false;
   }
 
+  /** 专名回声：短、无句读、词首大写/标识符 → 原文即正解，永久保留原文 */
+  function isProperNounEcho(src) {
+    const s = String(src || "").trim();
+    if (!s || s.length > 32) return false;
+    if (/[。！？；.!?;,，:：]/.test(s)) return false;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length > 4) return false;
+    return words.every((w) => /^[A-Z0-9]/.test(w) || /[A-Z0-9]{2,}/.test(w) || /[._/-]/.test(w));
+  }
+
+  /**
+   * 模型把原文照抄一份再附译文（「EN — ZH」/「EN（ZH）」/ 换行拼接）：只留译文段。
+   * 否则宿主会被写成英中混排，等同 replace 模式下的「上英下中」。
+   */
+  function stripSourceEcho(src, dst) {
+    const s = String(src || "").replace(/\s+/g, " ").trim();
+    let d = String(dst || "").trim();
+    if (!s || !d || s.length < 6) return dst;
+
+    const lines = d.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    if (lines.length > 1) {
+      const keep = lines.filter((ln) => !sameLanguageAsSource(s, ln));
+      if (keep.length && keep.length < lines.length) d = keep.join(" ");
+    }
+
+    const flat = d.replace(/\s+/g, " ").trim();
+    const lower = flat.toLowerCase();
+    const sl = s.toLowerCase();
+    let rest = "";
+    if (lower.startsWith(sl)) rest = flat.slice(s.length);
+    else if (lower.endsWith(sl)) rest = flat.slice(0, flat.length - s.length);
+    else return d;
+
+    rest = rest.replace(/^[\s—–\-−:：|·、,，.。/（(【\[]+/, "").replace(/[\s—–\-−:：|·、（(【\[)）\]】]+$/, "").trim();
+    if (!rest || rest.length < 2) return d;
+    if (sameLanguageAsSource(s, rest)) return d;
+    return rest;
+  }
+
+  /** 上屏前统一清洗：折叠重复 + 去英文回声段 */
+  function cleanTranslation(src, dst) {
+    return stripSourceEcho(src, collapseRepeatedTranslation(dst));
+  }
+
   /** 强启发式：疑似整页已是目标语（空收集 toast） */
   function looksAlreadyTargetLang(text) {
     const t = String(text || "");
@@ -1154,10 +1461,23 @@
       const nodes = root.querySelectorAll ? root.querySelectorAll("*") : [];
       for (const el of nodes) {
         const sr = el.shadowRoot;
-        if (sr) out.push(sr);
+        // 宿主本身就是 SKIP（relative-time / time / code…）：里面的文案同样不该收
+        if (sr && !el.matches?.(SKIP_HARD) && !el.matches?.(SKIP)) out.push(sr);
       }
     } catch { /* ignore */ }
     return out;
+  }
+
+  /** closest()，但能跨 open shadow 边界上溯（自定义元素把文案放在 shadow 内） */
+  function closestAcrossShadow(el, sel) {
+    let n = el;
+    while (n && n.nodeType === 1) {
+      const hit = n.closest?.(sel);
+      if (hit) return hit;
+      const root = n.getRootNode?.();
+      n = root && root.host ? root.host : null;
+    }
+    return null;
   }
 
   function looksLikeUrl(text) {
@@ -1174,20 +1494,67 @@
     if (/^(yesterday|today|just now|now)$/i.test(t)) return true;
     if (/^\d+\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s*ago$/i.test(t)) return true;
     if (/^(a|an)\s+(minute|hour|day|week|month|year)\s+ago$/i.test(t)) return true;
+    if (/^(last|next|this)\s+(week|month|year)$/i.test(t)) return true;
+    if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s*\d{4}$/i.test(t)) return true;
     if (/^\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}/i.test(t)) return true;
     if (/^\d{4}年\d{1,2}月\d{1,2}日/.test(t)) return true;
+    return false;
+  }
+
+  function looksLikeEmail(text) {
+    const t = String(text || "").trim();
+    if (!t || t.length > 120 || /\s/.test(t)) return false;
+    return /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(t);
+  }
+
+  function looksLikeFilePath(text) {
+    const t = String(text || "").trim();
+    if (!t || t.length > 160) return false;
+    if (/\s/.test(t) && !/^[A-Za-z0-9._-]+\s*\/\s*[A-Za-z0-9._-]+$/.test(t)) return false;
+    if (/^(~\/|\.\/|\.\.\/|\/)[\w./@+-]+$/.test(t)) return true;
+    if (/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\/?$/.test(t)) return true; // a/b, agents/skills
+    if (/\.(js|ts|tsx|jsx|mjs|cjs|json|md|txt|yml|yaml|toml|lock|css|html|svg|png|sh|py|rb|go|rs|conf|cfg)$/i.test(t) && !/\s/.test(t)) {
+      return true;
+    }
     return false;
   }
 
   function looksLikeIdentifier(text) {
     const t = String(text || "").trim();
     if (!t || t.length > 64) return false;
+    if (looksLikeEmail(t)) return true;
+    if (looksLikeFilePath(t)) return true;
+    // owner / repo（含「omacom / omarchy」带空格）
+    if (/^[A-Za-z0-9._-]+\s*\/\s*[A-Za-z0-9._-]+$/.test(t)) return true;
+    // 几乎只会出现在仓库文件树的路径段（整宿主=此词才跳；勿误伤导航文案 Plugins/Themes）
+    if (/^(bin|lib|src|dist|build|node_modules|vendor|__pycache__|\.github|\.gitlab|\.vscode|\.idea)$/i.test(t)) {
+      return true;
+    }
     if (/^[\w.-]+\/[\w.-]+$/.test(t)) return true; // owner/repo
     if (/^@?[A-Za-z][\w-]{0,38}$/.test(t) && !/^(Public|Private|Open|Closed|Code|Issues|Pull|About)$/i.test(t)) {
       // bare handle / single token — skip translating usernames
-      if (!/\s/.test(t) && !/^(Who|What|Why|How|The|Our|Home)$/i.test(t)) return /^[A-Za-z0-9][\w-]{2,}$/.test(t) && /\d/.test(t) || /^[a-z]+[0-9]+/i.test(t) || /^[a-z]+_[a-z0-9]+$/i.test(t);
+      if (!/\s/.test(t) && !/^(Who|What|Why|How|The|Our|Home)$/i.test(t)) {
+        return (
+          (/^[A-Za-z0-9][\w-]{2,}$/.test(t) && /\d/.test(t)) ||
+          /^[a-z]+[0-9]+/i.test(t) ||
+          /^[a-z]+_[a-z0-9]+$/i.test(t)
+        );
+      }
     }
     return false;
+  }
+
+  /** 多段路径/邮箱拼成一个宿主（文件列表被收到 ul 上）时整段跳过 */
+  function looksLikeIdentifierBlob(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    if (looksLikeIdentifier(t)) return true;
+    const normalized = t.replace(/\s*\/\s*/g, "/");
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    if (parts.length < 2 || parts.length > 16) return false;
+    return parts.every(
+      (p) => looksLikeEmail(p) || looksLikeFilePath(p) || looksLikeIdentifier(p) || /^[A-Za-z0-9._+-]{1,40}$/.test(p)
+    );
   }
 
   /** Google/Bing 等结果标题：链上 h3，after 易叠字 */
@@ -1205,18 +1572,25 @@
     return false;
   }
 
-  /** GitHub 文件树/路径名不译 */
+  /** GitHub 文件树/路径名/分支名不译 */
   function isRepoFileLabel(el, text) {
     const host = location.hostname || "";
     if (!/github\.com$/i.test(host) && !/gitlab\./i.test(host)) return false;
     const t = String(text || "").trim();
     if (!t) return false;
-    if (el.closest("[aria-labelledby*='folder'], [data-testid*='file'], .react-directory-filename-column, .js-navigation-item, table[aria-labelledby]")) {
+    // 目录行整行都是元数据（文件名 / 提交信息 / 时间列）：A5 一律不译
+    if (closestAcrossShadow(el, REPO_FILE_ROW)) return true;
+    if (el.closest("[aria-labelledby*='folder'], [data-testid*='file'], table[aria-labelledby]")) {
       if (t.length <= 80 && !/\s{2,}/.test(t)) return true;
     }
     if (/^\.[A-Za-z0-9._-]+$/.test(t)) return true; // .github
     if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._/-]*$/.test(t) && t.length < 64) return true;
     return false;
+  }
+
+  /** A5：文件列表元数据 / 路径 / 相对时间 —— 任何采集路径都不译 */
+  function isRowChromeText(el, text) {
+    return isRepoFileLabel(el, text) || looksLikeRelativeTime(text);
   }
 
   function isTightClip(el) {
@@ -1308,8 +1682,39 @@
     }
   }
 
+  /**
+   * 宿主占着「一行里的一个格子」：插兄弟必然抢同行宽度或撑高行（LAYOUT A1）。
+   * 两类：不换行的横向 flex 项（GitHub UnderlineNav）、单行高的表格/列表行内节点。
+   * 这类宿主只许原地换字，不许 after() 插 .pbt-tr。
+   */
+  function isRowLockedHost(el) {
+    if (!el || el.nodeType !== 1) return false;
+    try {
+      const p = el.parentElement;
+      if (p) {
+        const ps = getComputedStyle(p);
+        const rowFlex =
+          (ps.display.includes("flex") || ps.display.includes("grid")) &&
+          ps.flexDirection !== "column" &&
+          ps.flexDirection !== "column-reverse";
+        // nowrap：新兄弟换不了行，只能把容器固有宽度顶爆
+        if (rowFlex && ps.flexWrap === "nowrap" && !ps.display.includes("grid")) return true;
+      }
+      const row = el.closest("tr,[role='row']");
+      if (row) {
+        const cs = getComputedStyle(el);
+        const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 16) * 1.4;
+        if (row.getBoundingClientRect().height <= lh * 2.2) return true;
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
   function isChipListItem(el) {
     // Google「还搜索了」类：父级横向 flex，多项短链
+    if (!el || el.nodeType !== 1) return false;
     const p = el.parentElement;
     if (!p) return false;
     try {
@@ -1360,8 +1765,9 @@
     // Google「翻译此页」等浏览器 chrome
     if (/翻译此页|Translate this page|Translate to\b/i.test(text)) return false;
     if (looksLikeUrl(text)) return false;
+    if (looksLikeEmail(text)) return false;
     if (looksLikeRelativeTime(text)) return false;
-    if (looksLikeIdentifier(text)) return false;
+    if (looksLikeIdentifier(text) || looksLikeIdentifierBlob(text)) return false;
     if (el.tagName === "CITE") return false;
     if (el.closest?.("relative-time,time-ago,time,[datetime]")) return false;
     // 芯片仍跳；replace 模式大幅放宽 fragile/tightClip（无双语兄弟，布局风险低）
@@ -1646,6 +2052,14 @@
     return text.length >= 16 && text.length - innerLen >= 8;
   }
 
+  function isCollectBlock(el) {
+    try {
+      return !!el?.matches?.(BLOCKS);
+    } catch {
+      return false;
+    }
+  }
+
   /** 已收集集合中：含其它已收集后代的祖先一律丢掉（行内链接段落除外） */
   function pruneAncestorBlocks(blocks) {
     if (!blocks.length) return blocks;
@@ -1727,6 +2141,7 @@
         const seen = new Set(out.map((b) => b.el));
         for (const b of extra) {
           if (seen.has(b.el)) continue;
+          if (out.some((a) => a.el.contains(b.el) && isCollectBlock(a.el))) continue;
           seen.add(b.el);
           out.push(b);
         }
@@ -1735,7 +2150,8 @@
     } else if (!out.length) {
       out = collectLooseLatin(document.body);
     }
-    return expandListSiblings(out);
+    // 兄弟齐队后再否决行 chrome：散叶/合并父级等旁路不过 worth()，只有这里挡得住（A5）
+    return expandListSiblings(out).filter((b) => !isRowChromeText(b.el, b.text));
   }
 
   /** 是否「结构安全」：仅极小纯文本叶可 textContent；hero/大标题/有结构一律否 */
@@ -1791,7 +2207,7 @@
         const text = textOf(el);
         const minLen = hero ? 8 : (isReplaceFull() ? 6 : 12);
         if (!needsTranslate(text) || text.length < minLen || text.length > 200) continue;
-        if (looksLikeUrl(text) || isConsentWall(el)) continue;
+        if (looksLikeUrl(text) || looksLikeEmail(text) || looksLikeIdentifier(text) || looksLikeIdentifierBlob(text) || isConsentWall(el)) continue;
         if (!isEffectivelyVisible(el)) continue;
         try {
           const r = el.getBoundingClientRect();
@@ -1885,8 +2301,14 @@
             needsTranslate(pText);
         } catch { useParent = false; }
         if (useParent) {
+          const pText = textOf(parent);
+          // 文件列表短叶合并到 ul 后会变成「bin agents/skills …」整段误译 → 直接丢弃
+          if (looksLikeIdentifier(pText) || looksLikeIdentifierBlob(pText)) {
+            for (const g of group) skip.add(g.el);
+            continue;
+          }
           parent.dataset.pbtRole = parent.dataset.pbtRole || "prose";
-          out.push({ el: parent, text: textOf(parent) });
+          out.push({ el: parent, text: pText });
           for (const g of group) skip.add(g.el);
           continue;
         }
@@ -1894,11 +2316,6 @@
       out.push(a);
     }
     return pruneAncestorBlocks(out);
-  }
-
-  function cacheKey(text) {
-    const g = glossary.map((x) => `${x.src}=${x.dst}`).join("|");
-    return `${settings.targetLang}\0${g}\0${text}`;
   }
 
   function ensureId(el) {
@@ -2319,6 +2736,9 @@
       if (lhNum == null) lhNum = 1.65;
       else if (lhNum < 1.5) lhNum = Math.min(1.7, Math.max(1.55, lhNum < 1.2 ? 1.65 : 1.55));
     }
+    // 行内格子宿主：抬行高/加外边距就是撑行，保持宿主原值（A1/A3）
+    const rowLocked = isRowLockedHost(el);
+    if (rowLocked) lhNum = unitlessLineHeight(cs, srcPx);
 
     // 字距：中文正文默认 0；宽 tracking 收束
     let ls = cs.letterSpacing;
@@ -2339,7 +2759,8 @@
     el.style.fontWeight = weight;
     if (!inheritColor) el.style.color = col;
     else el.style.removeProperty("color"); // 继承
-    el.style.lineHeight = String(Math.round(lhNum * 100) / 100);
+    if (lhNum != null) el.style.lineHeight = String(Math.round(lhNum * 100) / 100);
+    else el.style.removeProperty("line-height");
     if (ls && ls !== "normal") el.style.letterSpacing = ls;
     else el.style.letterSpacing = "0";
     el.style.wordBreak = mono ? "break-all" : "normal";
@@ -2362,7 +2783,7 @@
     try {
       const mt = parseFloat(cs.marginTop) || 0;
       const mb = parseFloat(cs.marginBottom) || 0;
-      if (role === "body" && mt + mb < srcPx * 0.35) {
+      if (!rowLocked && role === "body" && mt + mb < srcPx * 0.35) {
         if (mb < srcPx * 0.25) el.style.marginBottom = "0.55em";
       }
     } catch { /* ignore */ }
@@ -2398,17 +2819,144 @@
     }
   }
 
-  /** 整页替换：叶文本 / 安全整替；不安全则 false（勿 textContent 毁结构） */
+  const hostTextSnaps = new WeakMap();
+
+  function hostTextNodes(el) {
+    const nodes = [];
+    if (!el) return nodes;
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        if (!n.textContent || !n.textContent.trim()) return NodeFilter.FILTER_REJECT;
+        const p = n.parentElement;
+        if (p && p.closest("script,style,noscript,svg,math,code,pre,.pbt-tr")) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let n;
+    while ((n = walk.nextNode())) nodes.push(n);
+    return nodes;
+  }
+
+  /** 文本节点是否落在宿主内部的链接/按钮里（整段译文写进去会把整段变成可点） */
+  function inInlineInteractive(el, node) {
+    let p = node.parentElement;
+    while (p && p !== el) {
+      if (p.matches?.("a[href],button,[role='button'],summary,label")) return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  /** 承接整段译文的节点：优先非交互的最长节点，避免整段被包进内联链接 */
+  function swapTargetIndex(el, nodes) {
+    let best = -1;
+    let bestLen = -1;
+    for (let i = 0; i < nodes.length; i++) {
+      if (inInlineInteractive(el, nodes[i])) continue;
+      const len = nodes[i].textContent.trim().length;
+      if (len > bestLen) {
+        bestLen = len;
+        best = i;
+      }
+    }
+    return best >= 0 ? best : 0;
+  }
+
+  /** code/kbd 原样保留；若译文已含同一串，藏掉宿主里那份，别让命令重复出现两次 */
+  function hideDuplicateCode(el, translatedText) {
+    const t = String(translatedText || "");
+    el.querySelectorAll?.("code,kbd,samp").forEach((c) => {
+      const s = (c.textContent || "").trim();
+      if (s.length >= 3 && t.includes(s)) {
+        c.dataset.pbtEchoHidden = "1";
+        c.style.setProperty("display", "none", "important");
+      }
+    });
+  }
+
+  function showHiddenCode(el) {
+    el.querySelectorAll?.("[data-pbt-echo-hidden]").forEach((c) => {
+      c.style.removeProperty("display");
+      delete c.dataset.pbtEchoHidden;
+    });
+  }
+
+  /** TOC 序号、chevron、纯标点：换字时原样保留，避免导航几何被掏空 */
+  function isChromeText(text) {
+    const t = String(text || "").trim();
+    if (!t) return true;
+    if (/^[›»><▸▹▾▿▼▲►◀·•\|│¦\-\u2013\u2014\u00b7、]+$/.test(t)) return true;
+    if (/^\d{1,3}([.\-]\d+){0,4}\.?$/.test(t)) return true;
+    if (t.length <= 2 && !/[A-Za-z\u00C0-\u024F\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(t)) return true;
+    return false;
+  }
+
+  /** 按原文各文本节点长度比例，把译文码点分配回去（保链接/加粗结构，勿整段灌进 node#0） */
+  function distributeAcrossTextNodes(nodes, translatedText) {
+    const chars = Array.from(String(translatedText || ""));
+    if (!nodes.length) return;
+    if (nodes.length === 1 || chars.length === 0) {
+      nodes[0].textContent = translatedText;
+      return;
+    }
+    const weights = nodes.map((n) => Math.max(1, Array.from(String(n.textContent || "").trim()).length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let offset = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      if (i === nodes.length - 1) {
+        nodes[i].textContent = chars.slice(offset).join("");
+        break;
+      }
+      const ideal = Math.round((chars.length * weights[i]) / total);
+      const maxShare = Math.max(1, chars.length - offset - (nodes.length - i - 1));
+      const share = Math.min(Math.max(1, ideal), maxShare);
+      nodes[i].textContent = chars.slice(offset, offset + share).join("");
+      offset += share;
+    }
+  }
+
+  /** Put the full translation into host text nodes without blanking siblings / nuking TOC & links. */
+  function swapHostTexts(el, translatedText) {
+    const nodes = hostTextNodes(el);
+    if (!nodes.length) return false;
+    if (!hostTextSnaps.has(el)) hostTextSnaps.set(el, nodes.map((n) => ({ n, t: n.textContent })));
+
+    const content = [];
+    for (const n of nodes) {
+      if (isChromeText(n.textContent)) continue; // leave chevrons / toc numbers
+      content.push(n);
+    }
+    const targets = content.length ? content : nodes;
+
+    if (targets.length === 1) {
+      // 单内容节点：整段写入；若它在链接内且另有非交互节点，swapTargetIndex 已无其它可选
+      const only = targets[0];
+      const all = nodes;
+      if (all.length > 1 && inInlineInteractive(el, only)) {
+        const k = swapTargetIndex(el, all);
+        if (k >= 0 && !inInlineInteractive(el, all[k]) && !isChromeText(all[k].textContent)) {
+          all[k].textContent = translatedText;
+        } else {
+          only.textContent = translatedText;
+        }
+      } else {
+        only.textContent = translatedText;
+      }
+    } else {
+      // 多内容节点：按比例分配，保留 a/b/em 几何，避免整段变巨链/巨粗 + 兄弟被掏空
+      distributeAcrossTextNodes(targets, translatedText);
+    }
+
+    hideDuplicateCode(el, translatedText);
+    el.classList.add("pbt-text-swap");
+    return true;
+  }
+
+  /** 整页替换：全部宿主文本 / 安全整替；不安全则 false（勿 textContent 毁结构） */
   function applyHostTranslation(el, translatedText) {
     if (!el) return false;
     if (el.dataset.pbtOrigText == null) el.dataset.pbtOrigText = textOf(el);
-    const leaf = findPrimaryTextNode(el);
-    if (leaf) {
-      if (el.dataset.pbtLeafOrig == null) el.dataset.pbtLeafOrig = leaf.textContent;
-      leaf.textContent = translatedText;
-      el.classList.add("pbt-text-swap");
-      return true;
-    }
+    if (swapHostTexts(el, translatedText)) return true;
     if (canSafelyReplaceText(el)) {
       el.textContent = translatedText;
       el.classList.add("pbt-text-swap");
@@ -2456,29 +3004,6 @@
     }
   }
 
-  function findPrimaryTextNode(el) {
-    if (!el) return null;
-    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-      acceptNode(n) {
-        if (!n.textContent || !n.textContent.trim()) return NodeFilter.FILTER_REJECT;
-        const p = n.parentElement;
-        if (p && p.closest("script,style,noscript,svg,math,code,pre,.pbt-tr")) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-    let best = null;
-    let bestLen = 0;
-    let n;
-    while ((n = walk.nextNode())) {
-      const len = n.textContent.trim().length;
-      if (len > bestLen) {
-        best = n;
-        bestLen = len;
-      }
-    }
-    return best;
-  }
-
   function hasInteractiveDescBeyondIcons(el) {
     return !!el.querySelector(
       "a[href],button,input,textarea,select,[role='button']:not([role='menuitem']):not([role='option']):not([role='treeitem'])"
@@ -2487,8 +3012,16 @@
 
   function restoreTextSwap(el) {
     if (el.dataset.pbtOrigText == null) return;
-    if (el.dataset.pbtLeafOrig != null) {
-      const leaf = findPrimaryTextNode(el);
+    showHiddenCode(el);
+    const snap = hostTextSnaps.get(el);
+    if (snap) {
+      for (const { n, t } of snap) {
+        if (n) n.textContent = t;
+      }
+      hostTextSnaps.delete(el);
+      delete el.dataset.pbtLeafOrig;
+    } else if (el.dataset.pbtLeafOrig != null) {
+      const leaf = hostTextNodes(el)[0];
       if (leaf) leaf.textContent = el.dataset.pbtLeafOrig;
       delete el.dataset.pbtLeafOrig;
     } else {
@@ -2501,6 +3034,8 @@
   /** 弹出层：只换 Text，不插布局节点 */
   /** 始终 nextSibling 贴宿主；column-reverse 用 order 纠视觉反序；禁止标题竖排窄条 */
   function insertTrAfter(el, node) {
+    // replace 模式零双语条：任何路径都不得在宿主下方插英上中下
+    if (isReplaceMode()) return false;
     el.after(node);
     // 硬防竖排/逐字折行（Stripe hero 曾出现双列竖排）
     node.style.writingMode = "horizontal-tb";
@@ -2586,13 +3121,8 @@
     el.dataset.pbtRole = "popup";
     if (state === "pending") return true;
 
-    // 1) 优先叶文本 / 标签 span：保留 svg/img 等 chrome
-    const leaf = findPrimaryTextNode(el);
-    if (leaf) {
-      if (el.dataset.pbtLeafOrig == null) el.dataset.pbtLeafOrig = leaf.textContent;
-      leaf.textContent = translatedText;
-      return true;
-    }
+    // 1) 全部叶文本：保留 svg/img 等 chrome，勿只换最长节点
+    if (swapHostTexts(el, translatedText)) return true;
     // 2) 纯文本叶：整替
     if (canSafelyReplaceText(el)) {
       el.textContent = translatedText;
@@ -2631,16 +3161,44 @@
     return false;
   }
 
+  /**
+   * 回声（译文≈原文）处理：专名保留原文、永不再插第二份英文；
+   * 其余算一次可重试的 fail，交给漏译扫描再打一轮，而不是永久 skip。
+   */
+  function echoSkip(el, srcText) {
+    const tries = Number(el.dataset.pbtEchoTries || 0) + 1;
+    el.dataset.pbtEchoTries = String(tries);
+    if (tries >= 2 || isProperNounEcho(srcText)) {
+      markSkip(el, "echo");
+      return "skip";
+    }
+    failBack(el, "echo-retry");
+    return "fail";
+  }
+
   function attach(el, translatedText, state) {
     if (!el || !el.isConnected) return "dead";
     if (isConsentWall(el)) return "skip";
-    translatedText = collapseRepeatedTranslation(translatedText);
-    if (state !== "fail" && state !== "pending" && sameLanguageAsSource(textOf(el), translatedText)) {
-      markSkip(el, "same-lang");
-      return "skip";
+    const srcText = el.dataset.pbtOrigText != null ? el.dataset.pbtOrigText : textOf(el);
+    translatedText = cleanTranslation(srcText, translatedText);
+    if (state !== "fail" && state !== "pending" && sameLanguageAsSource(srcText, translatedText)) {
+      return echoSkip(el, srcText);
+    }
+    // 行内格子宿主（不换行 flex 行 / 单行表格行）：只换字，禁止插兄弟抢行（A1）
+    if (!isPopupSurface(el) && isRowLockedHost(el)) {
+      clearAttached(el);
+      return attachPopupText(el, translatedText, state) ? "ok" : "skip";
     }
     // 已成功挂过且同文：禁止再叠一层 .pbt-tr
     if (el.dataset.pbtState === "ok" && el.dataset.pbtId && state === "ok") {
+      if (isReplaceMode()) {
+        el.dataset.pbtTrText = translatedText === "…" ? "" : translatedText;
+        if (translatedText && translatedText !== "…" && translatedText !== "...") {
+          applyHostTranslation(el, translatedText);
+        }
+        clearAttached(el);
+        return "ok";
+      }
       const existing = document.querySelectorAll(`.pbt-tr[data-pbt-for="${CSS.escape(el.dataset.pbtId)}"]`);
       if (existing.length === 1) {
         const span = existing[0].querySelector(".pbt-tr-text");
@@ -2658,23 +3216,24 @@
         clearAttached(el);
       }
     }
-    // 脆弱宿主：禁止 append（收集阶段应已过滤；双保险）；文案按钮/正文链除外。
-    // replace 下 syncModeFor 同步换字并移除 .pbt-tr，没有兄弟节点抢宽，
-    // 这里必须与 worth() 同口径放行，否则「图标+标题」行整排留英文。
+    // 脆弱宿主：双语禁止 append；replace 仍换字（芯片除外）。
+    // replace 下 syncModeFor 同步换字并移除 .pbt-tr，没有兄弟节点抢宽。
     if (
+      !isReplaceMode() &&
       !isPopupSurface(el) &&
       !isTextControl(el) &&
       !isContentLink(el) &&
-      (isReplaceFull()
-        ? isTightClip(el) && !(isHeading(el) || el.dataset?.pbtRole === "hero") && textOf(el).length < 8
-        : isFragileLayout(el) ||
-          (isTightClip(el) && !(isHeading(el) || el.dataset?.pbtRole === "hero")) ||
-          isChipListItem(el))
+      (isFragileLayout(el) ||
+        (isTightClip(el) && !(isHeading(el) || el.dataset?.pbtRole === "hero")) ||
+        isChipListItem(el))
     ) {
       return "skip";
     }
-    // 折叠短标题在横向 flex 行：禁止 after 抢宽；hero 长标题放行
-    if (isHeading(el) && !isReplaceFull()) {
+    if (isReplaceMode() && (isChipListItem(el) || isChipListItem(el.parentElement))) {
+      return "skip";
+    }
+    // 折叠短标题在横向 flex 行：禁止 after 抢宽；hero 长标题放行。replace 不插节点，无需回避
+    if (!isReplaceMode() && isHeading(el)) {
       const p = el.parentElement;
       if (p) {
         try {
@@ -2700,8 +3259,8 @@
       }
     }
 
-    // 标题只挂标题译文；正文级译文视为错位
-    if (headingTranslationMismatch(el, textOf(el), translatedText)) {
+    // 标题只挂标题译文；正文级译文视为错位。replace 仍换字，避免标题整段漏译
+    if (!isReplaceMode() && headingTranslationMismatch(el, textOf(el), translatedText)) {
       return "skip";
     }
 
@@ -2724,6 +3283,45 @@
           return attachPopupText(el, translatedText, state) ? "ok" : "skip";
         }
       } catch { /* fall through to stack */ }
+    }
+
+    if (isReplaceMode()) {
+      if (state === "fail") {
+        failBack(el, translatedText);
+        return "skip";
+      }
+      ensureId(el);
+      clearAttached(el);
+      restoreTextSwap(el);
+      const t = translatedText === "…" || translatedText === "..." ? "" : translatedText;
+      el.dataset.pbtTrText = t;
+      if (!t) {
+        markPending(el);
+        return "ok";
+      }
+      let srcCs = null;
+      try {
+        srcCs = getComputedStyle(el);
+      } catch { /* ignore */ }
+      relaxClipAncestors(el);
+      if (!applyHostTranslation(el, t)) {
+        markSkip(el, "no-replace");
+        return "skip";
+      }
+      // 换字必须真的落地：宿主文本没变 = 英文原样留着，按可重试的 fail 处理
+      if (textOf(el).replace(/\s+/g, " ").trim() === String(srcText).replace(/\s+/g, " ").trim()) {
+        restoreTextSwap(el);
+        failBack(el, "replace-noop");
+        return "fail";
+      }
+      applyReplaceTypography(el, srcCs);
+      el.classList.add("pbt-host");
+      if (el.dataset.pbtRole !== "hero" && el.dataset.pbtRole !== "control") el.dataset.pbtRole = "prose";
+      el.dataset.pbtState = state || "ok";
+      try {
+        if (typeof nudgeFabAwayFromContent === "function") nudgeFabAwayFromContent();
+      } catch { /* ignore */ }
+      return "ok";
     }
 
     const id = ensureId(el);
@@ -2790,6 +3388,7 @@
 
   function rebuildTrNode(el, text) {
     if (!el?.dataset?.pbtId || !text) return null;
+    if (isReplaceMode()) return null;
     const node = document.createElement("div");
     node.className = "pbt-tr pbt-layout-stack";
     node.setAttribute("translate", "no");
@@ -2814,7 +3413,7 @@
   }
 
   function syncModeFor(el, trNode) {
-    const mode = settings.displayMode || "bilingual";
+    const mode = settings.displayMode || "replace";
     let tr =
       trNode ||
       (el.dataset.pbtId &&
@@ -2833,7 +3432,12 @@
       if ((!t || t === "…" || t === "...") && tr) {
         t = tr.querySelector(".pbt-tr-text")?.textContent || "";
       }
-      if (!t || t === "…" || t === "...") return;
+      if (!t || t === "…" || t === "...") {
+        if (el.dataset.pbtId) {
+          document.querySelectorAll(`.pbt-tr[data-pbt-for="${CSS.escape(el.dataset.pbtId)}"]`).forEach((n) => n.remove());
+        }
+        return;
+      }
       el.dataset.pbtTrText = t;
 
       // 采样原文排版：若尚未换字，computed 仍是原文
@@ -2920,6 +3524,11 @@
     }
   }
 
+  /** replace 模式残留清道夫：含宿主已被回收/改 id 的孤儿双语条 */
+  function purgeTrNodes() {
+    document.querySelectorAll(".pbt-tr").forEach((n) => n.remove());
+  }
+
   function setMode(mode) {
     const next = mode === "translation" || mode === "replace" ? mode : "bilingual";
     settings.displayMode = next;
@@ -2933,6 +3542,7 @@
       }
       syncModeFor(el, tr);
     });
+    if (next === "replace") purgeTrNodes();
     renderFab();
     // 进入 replace：补全页未译块（缓存命中不重打）；不拆现有 attach
     if (next === "replace" && (translated || translating)) {
@@ -3021,6 +3631,20 @@
     return { title: document.title || "", host: location.host || "" };
   }
 
+  function reportError(message, extra) {
+    const payload = {
+      type: "PBT_LOG_ERROR",
+      message: String(message || "").slice(0, 400),
+      source: (extra && extra.source) || "content",
+      host: location.host || "",
+      itemCount: (extra && extra.itemCount) || 0,
+      engine: settings?.engine || "",
+    };
+    try {
+      chrome.runtime.sendMessage(payload, () => void chrome.runtime.lastError);
+    } catch (_) { /* SW gone */ }
+  }
+
   function runtimeSend(msg, ms) {
     const t = ms || 35000;
     return new Promise((resolve, reject) => {
@@ -3028,7 +3652,9 @@
       const timer = setTimeout(() => {
         if (done) return;
         done = true;
-        reject(new Error(`扩展后台超时 ${t / 1000}s（翻译引擎无响应）`));
+        const err = new Error(`扩展后台超时 ${t / 1000}s（翻译引擎无响应）`);
+        reportError(err.message, { source: "runtimeSend.timeout", itemCount: msg?.items?.length });
+        reject(err);
       }, t);
       try {
         chrome.runtime.sendMessage(msg, (res) => {
@@ -3036,13 +3662,17 @@
           done = true;
           clearTimeout(timer);
           const err = chrome.runtime.lastError;
-          if (err) reject(new Error(err.message || String(err)));
-          else resolve(res);
+          if (err) {
+            const m = err.message || String(err);
+            reportError(m, { source: "runtimeSend", itemCount: msg?.items?.length });
+            reject(new Error(m));
+          } else resolve(res);
         });
       } catch (e) {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        reportError(e?.message || e, { source: "runtimeSend.catch" });
         reject(e);
       }
     });
@@ -3052,24 +3682,36 @@
     const need = [];
     const have = [];
     for (const it of batch) {
-      const hit = cache.get(cacheKey(it.text));
+      const hit = cacheGetText(cacheKey(it.text));
       if (hit != null) have.push({ id: it.id, text: hit });
       else need.push(it);
     }
+    if (have.length) schedulePersistTrCache();
     if (!need.length) return have;
+    let touchedPn = false;
+    for (const it of need) {
+      if (touchProperNounsInText(it.text)) touchedPn = true;
+    }
+    if (touchedPn) persistProperNounsSoon();
+    const batchTexts = need.map((x) => x.text);
+    const gloss = glossaryWithProperNouns(batchTexts);
+    const preserve = PBT.pnMergeBatchPreserve(batchTexts, properNounList);
     const res = await runtimeSend({
       type: "PBT_BATCH",
       items: need.map(({ id, text }) => ({ id, text })),
       targetLang: settings.targetLang,
-      glossary,
+      glossary: gloss,
+      properNouns: preserve,
       page: pageContext(),
     }, 100000);
     if (!res?.ok) throw new Error(res?.error || "Translation failed");
     let wrote = false;
     for (const row of res.items || []) {
       const src = need.find((b) => b.id === row.id);
-      if (src) {
-        cache.set(cacheKey(src.text), row.text);
+      if (src && typeof row.text === "string" && row.text && row.text !== "…") {
+        const text = restoreProperNouns(src.text, row.text, preserve);
+        row.text = text;
+        cachePut(cacheKey(src.text), text);
         wrote = true;
       }
     }
@@ -3078,6 +3720,28 @@
       schedulePersistTrCache();
     }
     return have.concat(res.items || []);
+  }
+
+  /**
+   * Normalize whitelist / heuristic token spelling in the translation when the
+   * model kept the name but changed case (Windows → windows, Tim Cook → tim cook).
+   * Does not invent missing names.
+   */
+  function restoreProperNouns(src, dst, termList) {
+    let out = String(dst ?? "");
+    const s = String(src || "");
+    const terms = termList?.length
+      ? termList
+      : preserveTermsForPair(src, dst);
+    if (!out || !s || !terms.length) return out;
+    for (const term of terms) {
+      const escaped = String(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const reSrc = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "i");
+      if (!reSrc.test(s)) continue;
+      const reDst = new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "gi");
+      if (reDst.test(out)) out = out.replace(reDst, term);
+    }
+    return out;
   }
 
   function inView(el, pad) {
@@ -3131,6 +3795,13 @@
   }
 
   function sweepLeftovers() {
+    if (isReplaceMode()) {
+      document.querySelectorAll(".pbt-tr").forEach((tr) => tr.remove());
+      document.querySelectorAll(".pbt-text-swap").forEach((el) => {
+        if (el.textContent.trim() === "…" || el.textContent.trim() === "...") restoreTextSwap(el);
+      });
+      return;
+    }
     document.querySelectorAll(".pbt-tr").forEach((tr) => {
       const t = tr.querySelector(".pbt-tr-text")?.textContent || "";
       if (t === "…" || t === "...") tr.remove();
@@ -3189,10 +3860,11 @@
       const got = new Set();
       for (const row of rows || []) {
         if (!row?.text) continue;
-        row.text = collapseRepeatedTranslation(row.text);
         const rid = String(row.id);
         const src = byId.get(rid) || byId.get(row.id);
         if (!src) continue;
+        row.text = cleanTranslation(src.text || "", row.text);
+        if (!row.text) continue;
         if (!src.el.isConnected) {
           markSkip(src.el, "dead");
           got.add(rid);
@@ -3207,7 +3879,7 @@
         {
           const srcText0 = src.text || textOf(src.el);
           if (sameLanguageAsSource(srcText0, row.text)) {
-            markSkip(src.el, "same-lang");
+            if (echoSkip(src.el, srcText0) === "fail") failed += 1;
             got.add(rid);
             continue;
           }
@@ -3218,7 +3890,7 @@
           const cut = String(row.text).split(/[。！？；\n]/)[0].replace(/[—–-].*$/, "").trim();
           if (cut && !headingTranslationMismatch(src.el, srcText, cut)) {
             if (sameLanguageAsSource(srcText, cut)) {
-              markSkip(src.el, "same-lang");
+              if (echoSkip(src.el, srcText) === "fail") failed += 1;
               got.add(rid);
               continue;
             }
@@ -3234,9 +3906,12 @@
               continue;
             }
           }
-          markSkip(src.el, "heading-mismatch");
-          got.add(rid);
-          continue;
+          // replace 不插节点：宁可标题吃下整句译文，也不留英文标题
+          if (!isReplaceMode()) {
+            markSkip(src.el, "heading-mismatch");
+            got.add(rid);
+            continue;
+          }
         }
         const st = attach(src.el, row.text, "ok");
         if (st === "ok") {
@@ -3247,6 +3922,10 @@
             renderFab();
             toast(`已出译 ${countOk()} 段…`, false, true);
           }
+        } else if (st === "fail") {
+          // attach 已 failBack：保留可重试状态，勿覆写成永久 skip
+          failed += 1;
+          got.add(rid);
         } else if (st === "skip" || st === "dead") {
           const reason =
             st === "dead" ? "dead" : src.el.dataset.pbtSkipReason || "fragile";
@@ -3276,7 +3955,7 @@
     }
 
     async function worker() {
-      while (cursor < items.length && my === runId && translating) {
+      while (cursor < items.length && my === runId) {
         const start = cursor;
         cursor += size;
         const batch = items.slice(start, start + size);
@@ -3322,6 +4001,7 @@
         } catch (err) {
           if (my !== runId) return;
           lastBatchError = String(err?.message || err).slice(0, 100);
+          reportError(err?.message || err, { source: "runQueue.batch", itemCount: batch.length });
           toast(lastBatchError, true, true);
           // 整批挂：逐条再试，能救一条是一条
           for (const it of batch) {
@@ -3533,7 +4213,12 @@
         );
         clearInterval(hotWatch);
         hotWatch = 0;
-      } else if (ok > 0 && elapsed >= 8000 && document.querySelectorAll(".pbt-tr").length === 0) {
+      } else if (
+        ok > 0 &&
+        elapsed >= 8000 &&
+        !isReplaceMode() &&
+        document.querySelectorAll(".pbt-tr").length === 0
+      ) {
         toast(`已标记 ${ok} 段但未见译文节点，请刷新重试`, true, true);
         clearInterval(hotWatch);
         hotWatch = 0;
@@ -3750,7 +4435,26 @@
     if (i >= 0) glossary[i] = { src, dst };
     else glossary.push({ src, dst });
     await persistGlossary();
+    // Identity pin also grows the durable proper-noun whitelist (keep-as-is).
+    if (PBT.pnNormKey(src) === PBT.pnNormKey(dst)) {
+      properNounStore = await PBT.pnAdd(src, { pinned: true });
+      properNounList = PBT.pnTermList(properNounStore);
+    }
     toast(`已固定术语：${src} → ${dst}`);
+    if (lastSel.host) retryOne(lastSel.host);
+  }
+
+  /** Selection → keep as-is forever (durable whitelist, not page glossary). */
+  async function pinProperNoun() {
+    if (!lastSel?.text) return;
+    const src = PBT.pnSanitizeTerm(lastSel.text.slice(0, 64));
+    if (!src) {
+      toast("专名过长或无效", true);
+      return;
+    }
+    properNounStore = await PBT.pnAdd(src, { pinned: true });
+    properNounList = PBT.pnTermList(properNounStore);
+    toast(`已保留专名：${src}`);
     if (lastSel.host) retryOne(lastSel.host);
   }
 
@@ -3880,7 +4584,7 @@
           border: 1px solid #000;
         }
         .tip-text { white-space: pre-wrap; }
-        .tip-actions { margin-top: 6px; display: flex; gap: 6px; }
+        .tip-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
         .tip-actions button { padding: 4px 8px; border-radius: 6px; font-size: 12px; }
         .bubble { pointer-events: none; opacity: .92; font-size: 12px; padding: 4px 8px; }
       </style>
@@ -3890,7 +4594,10 @@
       <div class="toast" id="toast"></div>
       <div class="tip" id="tip">
         <div class="tip-text" id="tipText"></div>
-        <div class="tip-actions"><button type="button" id="pin">固定术语</button></div>
+        <div class="tip-actions">
+          <button type="button" id="pin">固定术语</button>
+          <button type="button" id="pinPn">保留专名</button>
+        </div>
       </div>
       <div class="bubble" id="bubble"></div>
     `;
@@ -3924,6 +4631,10 @@
     shadow.getElementById("pin").addEventListener("click", (e) => {
       e.preventDefault();
       pinTerm();
+    });
+    shadow.getElementById("pinPn").addEventListener("click", (e) => {
+      e.preventDefault();
+      pinProperNoun();
     });
     renderFab();
   }
@@ -4099,7 +4810,10 @@
     mountUi();
     const el = ui.shadow.getElementById("tip");
     ui.shadow.getElementById("tipText").textContent = text;
-    ui.shadow.getElementById("pin").style.display = pinable ? "inline-block" : "none";
+    const show = pinable ? "inline-block" : "none";
+    ui.shadow.getElementById("pin").style.display = show;
+    const pinPn = ui.shadow.getElementById("pinPn");
+    if (pinPn) pinPn.style.display = show;
     el.style.display = "block";
     el.style.top = `${Math.min(window.innerHeight - 12, rect.bottom + 8)}px`;
     el.style.left = `${Math.min(window.innerWidth - 24, Math.max(8, rect.left))}px`;
