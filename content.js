@@ -6,14 +6,17 @@
   const SKIP =
     "script,style,noscript,template,svg,math,canvas,iframe,video,audio,pre,textarea,input,select,option,[contenteditable],#pbt-root";
   // Never collected; kept verbatim (still shown to the model for context) when inline.
-  const KEEP = "code,kbd,samp,var,time,[translate='no'],.notranslate";
+  const KEEP = "code,kbd,samp,var,time,relative-time,[translate='no'],.notranslate";
   const BLOCK_TAGS = new Set(
     "P DIV SECTION ARTICLE MAIN HEADER FOOTER NAV ASIDE UL OL LI DL DT DD TABLE THEAD TBODY TFOOT TR TD TH CAPTION H1 H2 H3 H4 H5 H6 BLOCKQUOTE FIGURE FIGCAPTION FORM FIELDSET LEGEND DETAILS SUMMARY BUTTON HR ADDRESS".split(" ")
   );
   const INLINE_TAGS = new Set("EM STRONG B I U S SMALL MARK ABBR SUP SUB Q CITE DEL INS BR WBR IMG PICTURE SVG CODE KBD SAMP VAR TIME".split(" "));
   const TARGET_SCRIPT = { zh: /[\u4e00-\u9fff]/, ja: /[\u3040-\u30ff]/, ko: /[\uac00-\ud7af]/, en: /[A-Za-z]/ };
-  // URLs, emails, paths, identifiers: one token with a digit/underscore, a leading slash or two slashes.
-  const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_]\S*|\/\S+|\S+\/\S+\/\S*)$/i;
+  // URLs, emails, identifiers and paths: one token that is dotted / digit- or underscore-bearing
+  // (README.md, v1), or two tokens joined by a slash (omacom / omarchy, CI/CD).
+  const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|\S+\s*\/\s*\S+)$/i;
+  // One all-lowercase or ALL-CAPS token: dir names, handles, branches, LICENSE (bin, config, quattro, ryanrhughes).
+  const HANDLE = /^(?:[a-z][a-z-]*|[A-Z][A-Z-]+)$/;
   const CACHE_KEY = "pbt.segCache.v2";
   const CACHE_CAP = 2000;
   const MAX_CHARS = 2400;
@@ -24,6 +27,7 @@
   const cache = new Map(); // cacheKey → translation (insertion order = LRU)
   const dirty = new Set(); // mutation roots awaiting re-collect
   const thrash = new WeakMap(); // host → times the page rewrote it after we painted
+  const inflight = new Set(); // source texts currently being requested
   let settings = { ...PBT.DEFAULTS };
   let nouns = [];
   let active = false;
@@ -84,7 +88,8 @@
 
   function needsTranslate(text) {
     const letters = text.match(/\p{L}/gu) || [];
-    if (letters.length < 2 || NOISE.test(text.trim())) return false;
+    const t = text.trim();
+    if (letters.length < 2 || NOISE.test(t) || HANDLE.test(t)) return false;
     const re = TARGET_SCRIPT[settings.targetLang.slice(0, 2)];
     return !re || letters.filter((c) => re.test(c)).length / letters.length < 0.5;
   }
@@ -162,14 +167,22 @@
     try {
       while (queue.length && my === runId) {
         const batch = [];
+        const deferred = [];
         let chars = 0;
         while (queue.length && batch.length < (isCursor() ? 6 : 12) && (!batch.length || chars + queue[0].src.length <= MAX_CHARS)) {
           const u = queue.shift();
           if (u.dead) continue;
+          // same text already in flight in another worker: wait for it and take the cache hit
+          if (inflight.has(u.src)) {
+            deferred.push(u);
+            continue;
+          }
           batch.push(u);
           chars += u.src.length;
         }
+        queue.push(...deferred);
         if (batch.length) await translateBatch(batch, my);
+        else await sleep(50);
       }
     } finally {
       // workers of a superseded run (restore → start) must not count against the new one
@@ -187,6 +200,7 @@
       else items.push({ id: String(items.length), text: src, us });
     }
     if (!items.length) return;
+    items.forEach((it) => inflight.add(it.text));
     try {
       const rows = await request(items.map(({ id, text }) => ({ id, text })));
       if (my !== runId) return;
@@ -196,6 +210,8 @@
       if (my !== runId) return;
       for (const it of items) for (const u of it.us) settle(u, "fail");
       toast(String(e.message || e));
+    } finally {
+      items.forEach((it) => inflight.delete(it.text));
     }
   }
 
