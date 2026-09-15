@@ -206,11 +206,15 @@ async function chatCompletions(s, items, page, cfg) {
   return align(items, extractJsonArray(text));
 }
 
+// Ablation switch (test builds fill this; empty in the shipped file). See docs/ablation-1.4.56.md.
+const ABLATE = new Set();
+
 /** One retry after a short backoff, then give up (content keeps the source and logs the error). */
 async function translateHttp(s, items, page, cfg) {
   try {
     return await chatCompletions(s, items, page, cfg);
   } catch (err) {
+    if (ABLATE.has("retry")) throw err;
     await new Promise((r) => setTimeout(r, 600));
     return chatCompletions(s, items, page, cfg);
   }

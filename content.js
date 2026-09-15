@@ -2,6 +2,10 @@
   if (window.__pbtLoaded) return;
   window.__pbtLoaded = true;
 
+  // Ablation switches (test builds fill this set; empty in the shipped file). See docs/ablation-1.4.56.md.
+  const ABLATE = new Set();
+  const off = (name) => ABLATE.has(name);
+
   // Never collected; omitted from a host's source text when inline.
   const SKIP =
     "script,style,noscript,template,svg,math,canvas,iframe,video,audio,pre,textarea,input,select,option,[contenteditable],#pbt-root";
@@ -21,6 +25,7 @@
   const CACHE_CAP = 2000;
   const MAX_CHARS = 2400;
   const MAX_HOST_CHARS = 4000;
+  const SLICE_MS = 8; // collect work per frame
   const MO_OPTS = { childList: true, subtree: true };
 
   const unitOf = new Map(); // host element → unit
@@ -31,15 +36,18 @@
   let settings = { ...PBT.DEFAULTS };
   let nouns = [];
   let active = false;
+  let painted = false; // first paint of this run has landed
   let runId = 0;
   let queue = [];
   let workers = 0;
   let mo = null;
   let moTimer = 0;
   let persistTimer = 0;
+  let collecting = Promise.resolve(); // collects run one at a time so a subtree is never wrapped twice
   const ui = {};
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const frame = () => new Promise((r) => requestAnimationFrame(r));
   const stripTags = (s) => String(s || "").replace(/<\/?b\d+>/g, "");
   const hasLetters = (n) => /\p{L}/u.test(n.textContent || "");
   const isCursor = () => /^(cursor|bridge)$/i.test(settings.engine || "");
@@ -82,14 +90,14 @@
       }
       return s;
     };
-    const src = walk(host, false).replace(/\s+/g, " ").trim();
-    return { el: host, src, map, plain: plain.trim() };
+    const tagged = walk(host, false).replace(/\s+/g, " ").trim();
+    return { el: host, src: off("tags") ? stripTags(tagged) : tagged, map, plain: plain.trim() };
   }
 
   function needsTranslate(u) {
     const t = u.plain;
     const letters = t.match(/\p{L}/gu) || [];
-    if (letters.length < 2 || NOISE.test(t) || isPathLabel(u.el, t)) return false;
+    if (letters.length < 2 || (!off("identifier") && (NOISE.test(t) || isPathLabel(u.el, t)))) return false;
     const re = TARGET_SCRIPT[settings.targetLang.slice(0, 2)];
     return !re || letters.filter((c) => re.test(c)).length / letters.length < 0.5;
   }
@@ -115,45 +123,65 @@
     return span;
   }
 
-  function collect(root, out) {
-    const push = (el) => {
-      const u = serialize(el);
-      const ok = needsTranslate(u) && u.plain.length <= MAX_HOST_CHARS;
-      if (ok) out.push(u);
-      return ok;
-    };
-    const visit = (el) => {
-      if (el.nodeType !== 1 || el.dataset.pbtState || el.matches(SKIP) || el.matches(KEEP) || safeMatches(el, settings.excludeCss)) return;
-      if (el.shadowRoot) {
-        mo?.observe(el.shadowRoot, MO_OPTS);
-        children(el.shadowRoot);
-      }
-      children(el);
-    };
-    const children = (el) => {
-      const kids = [...el.childNodes];
-      if (!kids.some(isBlockBox)) {
-        if (el.nodeType === 1) push(el);
-        return;
-      }
-      let run = [];
-      const flush = () => {
-        const span = run.some((n) => n.nodeType === 3 && hasLetters(n)) && wrap(run);
-        if (!span || !push(span)) {
-          if (span) span.replaceWith(...span.childNodes);
-          run.forEach((n) => n.nodeType === 1 && visit(n));
-        }
+  /** Depth-first walk as a generator so the driver can yield to the frame between elements. */
+  function* visit(el, out) {
+    if (el.nodeType !== 1 || el.dataset.pbtState || el.matches(SKIP) || el.matches(KEEP) || safeMatches(el, settings.excludeCss)) return;
+    yield;
+    if (el.shadowRoot && !off("shadow")) {
+      mo?.observe(el.shadowRoot, MO_OPTS);
+      yield* children(el.shadowRoot, out);
+    }
+    yield* children(el, out);
+  }
+
+  function* children(el, out) {
+    const kids = [...el.childNodes];
+    if (!kids.some(isBlockBox)) {
+      if (el.nodeType === 1) push(el, out);
+      return;
+    }
+    let run = [];
+    for (const n of kids) {
+      if (isBlockBox(n)) {
+        yield* flush(run, out);
         run = [];
-      };
-      for (const n of kids) {
-        if (isBlockBox(n)) {
-          flush();
-          visit(n);
-        } else run.push(n);
+        yield* visit(n, out);
+      } else run.push(n);
+    }
+    yield* flush(run, out);
+  }
+
+  /** An inline run between block siblings: wrap it into one unit if it carries text, else visit its elements. */
+  function* flush(run, out) {
+    const span = !off("wrap") && run.some((n) => n.nodeType === 3 && hasLetters(n)) && wrap(run);
+    if (span && push(span, out)) return;
+    if (span) span.replaceWith(...span.childNodes);
+    for (const n of run) if (n.nodeType === 1) yield* visit(n, out);
+  }
+
+  function push(el, out) {
+    const u = serialize(el);
+    const ok = needsTranslate(u) && u.plain.length <= MAX_HOST_CHARS;
+    if (ok) out.push(u);
+    return ok;
+  }
+
+  /** Collect `root` in ≤ SLICE_MS slices, enqueueing what each slice found; own DOM writes are drained before yielding. */
+  function collect(root) {
+    const job = async () => {
+      const out = [];
+      let deadline = performance.now() + SLICE_MS;
+      for (const it = visit(root, out); !it.next().done; ) {
+        if (off("chunk") || performance.now() < deadline) continue;
+        mo?.takeRecords();
+        enqueue(out.splice(0));
+        await frame();
+        deadline = performance.now() + SLICE_MS;
       }
-      flush();
+      mo?.takeRecords();
+      enqueue(out);
     };
-    visit(root);
+    return (collecting = collecting.then(job, job));
   }
 
   /* ---------- queue: viewport-first, dedupe, cache ---------- */
@@ -164,35 +192,48 @@
   }
 
   function enqueue(units) {
+    if (!units.length) return;
     for (const u of units) {
       u.el.dataset.pbtState = "queued";
       unitOf.set(u.el, u);
       queue.push(u);
     }
-    const d = new Map(queue.map((u) => [u, distance(u.el)]));
-    queue.sort((a, b) => d.get(a) - d.get(b));
-    for (let n = (isCursor() ? 2 : 3) - workers; n > 0 && queue.length; n--) worker(runId);
+    if (!off("sort")) {
+      const d = new Map(queue.map((u) => [u, distance(u.el)]));
+      queue.sort((a, b) => d.get(a) - d.get(b));
+    }
+    const max = off("workers") ? 1 : isCursor() ? 2 : off("workers6") ? 3 : 6;
+    for (let n = max - workers; n > 0 && queue.length; n--) worker(runId);
+  }
+
+  /** Pull the next batch off the queue; units whose text is already in flight wait for the cache hit.
+   *  Until the first paint lands, batches stay small so the viewport shows Chinese after one short round trip;
+   *  afterwards they are char-packed to cut round trips. */
+  function nextBatch() {
+    const batch = [];
+    const deferred = [];
+    const small = !painted && !off("firstsmall");
+    const size = off("batch") ? 1 : small ? 4 : isCursor() ? 6 : off("bigbatch") ? 12 : 20;
+    const maxChars = small ? 800 : off("bigbatch") ? MAX_CHARS : MAX_CHARS * 1.5;
+    let chars = 0;
+    while (queue.length && batch.length < size && (!batch.length || chars + queue[0].src.length <= maxChars)) {
+      const u = queue.shift();
+      if (u.dead) continue;
+      if (inflight.has(u.src)) deferred.push(u);
+      else {
+        batch.push(u);
+        chars += u.src.length;
+      }
+    }
+    queue.push(...deferred);
+    return batch;
   }
 
   async function worker(my) {
     workers += 1;
     try {
       while (queue.length && my === runId) {
-        const batch = [];
-        const deferred = [];
-        let chars = 0;
-        while (queue.length && batch.length < (isCursor() ? 6 : 12) && (!batch.length || chars + queue[0].src.length <= MAX_CHARS)) {
-          const u = queue.shift();
-          if (u.dead) continue;
-          // same text already in flight in another worker: wait for it and take the cache hit
-          if (inflight.has(u.src)) {
-            deferred.push(u);
-            continue;
-          }
-          batch.push(u);
-          chars += u.src.length;
-        }
-        queue.push(...deferred);
+        const batch = nextBatch();
         if (batch.length) await translateBatch(batch, my);
         else await sleep(50);
       }
@@ -202,17 +243,26 @@
     }
   }
 
-  async function translateBatch(batch, my) {
+  /** Group a batch by source text; cache hits paint immediately, the rest become request items. */
+  function splitBatch(batch) {
     const groups = new Map();
-    for (const u of batch) (groups.get(u.src) || groups.set(u.src, []).get(u.src)).push(u);
-    const items = [];
-    for (const [src, us] of groups) {
-      const hit = cache.get(cacheKey(src));
-      if (hit) us.forEach((u) => paint(u, hit));
-      else items.push({ id: String(items.length), text: src, us });
+    for (const u of batch) {
+      const key = off("dedupe") ? u : u.src;
+      (groups.get(key) || groups.set(key, []).get(key)).push(u);
     }
+    const items = [];
+    for (const us of groups.values()) {
+      const hit = !off("cache") && cache.get(cacheKey(us[0].src));
+      if (hit) us.forEach((u) => paint(u, hit));
+      else items.push({ id: String(items.length), text: us[0].src, us });
+    }
+    return items;
+  }
+
+  async function translateBatch(batch, my) {
+    const items = splitBatch(batch);
     if (!items.length) return;
-    items.forEach((it) => inflight.add(it.text));
+    if (!off("dedupe")) items.forEach((it) => inflight.add(it.text));
     try {
       const rows = await request(items.map(({ id, text }) => ({ id, text })));
       if (my !== runId) return;
@@ -233,7 +283,7 @@
       type: "PBT_BATCH",
       items,
       targetLang: settings.targetLang,
-      properNouns: nouns.filter((t) => blob.includes(t.toLowerCase())).slice(0, 80),
+      properNouns: off("nouns") ? [] : nouns.filter((t) => blob.includes(t.toLowerCase())).slice(0, 80),
       page: { title: document.title, host: location.host },
     };
     const res = await withTimeout(chrome.runtime.sendMessage(msg), 100000, "扩展后台超时 100s（翻译引擎无响应）").catch((e) => {
@@ -256,11 +306,16 @@
     });
   }
 
-  /** Result === source (or empty) → keep the source; anything else is painted. */
+  /** Missing row → one re-request; result === source (or empty) → keep the source; anything else is painted. */
   function accept(u, dst) {
+    if (!dst && !u.retried && !off("missretry")) {
+      u.retried = true;
+      queue.unshift(u);
+      return;
+    }
     const norm = (t) => stripTags(t).replace(/\s+/g, "").toLowerCase();
-    if (!dst || norm(dst) === norm(u.src)) return settle(u, "skip");
-    remember(cacheKey(u.src), dst);
+    if (!dst || (!off("echo") && norm(dst) === norm(u.src))) return settle(u, "skip");
+    if (!off("cache")) remember(cacheKey(u.src), dst);
     paint(u, dst);
   }
 
@@ -310,7 +365,7 @@
     }
     let p = 0;
     let buf = "";
-    const flush = () => {
+    const flushSlot = () => {
       const nodes = slots[p] || [];
       if (nodes.length) nodes.forEach((n, i) => (n.data = i ? "" : buf));
       else if (buf.trim()) u.created.push(E.insertBefore(document.createTextNode(buf), anchors[p] || null));
@@ -322,16 +377,18 @@
         buf += part;
         continue;
       }
-      flush();
+      flushSlot();
       const m = u.map[part.id - 1];
       if (!m) buf += flatten(part.parts);
       else if (!m.keep) write(u, m.el, part.parts);
     }
-    flush();
+    flushSlot();
     for (let q = p; q < slots.length; q++) slots[q].forEach((n) => (n.data = ""));
   }
 
   function paint(u, dst) {
+    // result for a unit the page already rewrote or removed: painting it would overwrite the page's newer text
+    if (!off("deadguard") && (u.dead || !u.el.isConnected)) return;
     const { parts, seen } = parse(dst);
     const nodes = [];
     const w = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT);
@@ -346,7 +403,8 @@
       live.forEach((n) => (n.data = n === main ? stripTags(dst) : ""));
     }
     u.el.dataset.pbtState = "ok";
-    mo?.takeRecords();
+    painted = true;
+    if (!off("selfignore")) mo?.takeRecords();
   }
 
   function resetHost(el) {
@@ -370,7 +428,7 @@
       observe();
       renderFab();
     }
-    translateNew([document.body]);
+    await collect(document.body);
     while (workers) await sleep(250);
     return { ok: true, translated: active, count: okCount() };
   }
@@ -378,6 +436,7 @@
   function restore() {
     runId += 1;
     active = false;
+    painted = false;
     queue = [];
     workers = 0;
     mo?.disconnect();
@@ -396,30 +455,30 @@
     return on ? start() : restore();
   }
 
-  function translateNew(roots) {
-    const units = [];
-    for (const r of roots) if (r?.isConnected && !r.closest(`${SKIP},${KEEP}`)) collect(r, units);
-    mo?.takeRecords();
-    if (units.length) enqueue(units);
+  async function translateNew(roots) {
+    for (const r of roots) if (r?.isConnected && !r.closest(`${SKIP},${KEEP}`)) await collect(r);
+  }
+
+  /** A page mutation under one of our hosts: give the host back to the page and re-collect from its parent. */
+  function markDirty(t) {
+    const host = t.closest("[data-pbt-state]");
+    if (!host) return dirty.add(t);
+    const parent = host.parentElement;
+    const n = (thrash.get(host) || 0) + 1;
+    thrash.set(host, n);
+    resetHost(host);
+    // page keeps rewriting this node (ticker / typewriter): stop chasing it
+    if (n > 3 && !off("thrash")) host.dataset.pbtState = "skip";
+    dirty.add(parent || t);
   }
 
   /** Page mutations only; our own writes are drained with takeRecords() right after each paint. */
   function observe() {
-    if (mo) return;
+    if (mo || off("observer")) return;
     mo = new MutationObserver((records) => {
       for (const r of records) {
         const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
-        if (!t) continue;
-        const host = t.closest("[data-pbt-state]");
-        if (host) {
-          const parent = host.parentElement;
-          const n = (thrash.get(host) || 0) + 1;
-          thrash.set(host, n);
-          resetHost(host);
-          // page keeps rewriting this node (ticker / typewriter): stop chasing it
-          if (n > 3) host.dataset.pbtState = "skip";
-          dirty.add(parent || t);
-        } else dirty.add(t);
+        if (t) markDirty(t);
       }
       // fixed window, not a trailing debounce: pages that mutate continuously must still flush
       if (!moTimer) {
@@ -539,6 +598,8 @@
     await loadCache();
     mountUi();
     // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches
-    if (settings.serviceOn) document.readyState === "complete" ? start() : addEventListener("load", () => start());
+    if (!settings.serviceOn) return;
+    if (off("loadgate") || document.readyState === "complete") start();
+    else addEventListener("load", () => start());
   });
 })();
