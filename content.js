@@ -25,7 +25,10 @@
   const CACHE_CAP = 2000;
   const CACHE_PERSIST_MAX = 200;
   const CHEAP_MAX = 40; // tag-free Latin strings up to this length go to the on-device Translator when available
-  const NEAR = { rootMargin: "50% 0px" }; // viewport + half a screen of prefetch
+  const NEAR = { rootMargin: "50% 0px 75% 0px" }; // viewport + half screen above + ¾ screen below (scroll-down prefetch)
+  const NEAR_ABOVE = 0.5; // refreshNear: viewport + this × innerHeight above
+  const NEAR_BELOW = 0.75; // refreshNear: viewport + this × innerHeight below
+  const KICK_MS = 60; // debounced kick for IO/mutation; scroll uses kickNow via rAF
   const MAX_CHARS = 3600;
   const MAX_HOST_CHARS = 4000;
   const SLICE_MS = 8; // collect work per frame
@@ -48,6 +51,7 @@
   let translator = null; // Promise<Translator> when the on-device API can translate to the target language
   let moTimer = 0;
   let kickTimer = 0;
+  let scrollRaf = 0;
   let persistTimer = 0;
   let collecting = Promise.resolve(); // collects run one at a time so a subtree is never wrapped twice
   const ui = {};
@@ -208,9 +212,16 @@
     return r.width || r.height ? Math.abs((r.top + r.bottom) / 2 - innerHeight / 2) : Infinity;
   }
 
-  /** Cache hits paint at once wherever they are; the rest wait in the queue until the viewport gate marks them near. */
+  /** True when any part of the element intersects the visible viewport (not just prefetch margin). */
+  function inViewport(el) {
+    const r = el.getBoundingClientRect();
+    return !!(r.width && r.height && r.bottom >= 0 && r.top <= innerHeight);
+  }
+
+  /** Cache hits paint synchronously; the rest wait in the queue until the viewport gate marks them near. */
   function enqueue(units) {
     if (!units.length) return;
+    let urgent = false;
     for (const u of units) {
       u.el.dataset.pbtState = "queued";
       unitOf.set(u.el, u);
@@ -220,56 +231,83 @@
         queue.push(u);
         if (io) io.observe(u.el);
         else u.near = true;
+        if (!off("gate") && distance(u.el) <= innerHeight * 0.55) urgent = true;
       }
     }
-    // viewport-first order protects CLS (0.094 → 0.139 without it)
-    if (!off("sort")) {
-      const d = new Map(queue.map((u) => [u, distance(u.el)]));
-      queue.sort((a, b) => d.get(a) - d.get(b));
-    }
-    scheduleKick();
+    sortQueue();
+    urgent ? kickNow() : scheduleKick();
+  }
+
+  /** Viewport-first order protects CLS (0.094 → 0.139 without it). Re-sorted on scroll so the fold always wins. */
+  function sortQueue() {
+    if (off("sort") || queue.length < 2) return;
+    const d = new Map(queue.map((u) => [u, distance(u.el)]));
+    queue.sort((a, b) => d.get(a) - d.get(b));
+  }
+
+  function kickNow() {
+    clearTimeout(kickTimer);
+    kickTimer = 0;
+    kick();
   }
 
   function scheduleKick() {
-    clearTimeout(kickTimer);
-    kickTimer = setTimeout(kick, 120);
+    if (kickTimer) return;
+    kickTimer = setTimeout(() => {
+      kickTimer = 0;
+      kick();
+    }, KICK_MS);
   }
 
-  /** Sync `near` from layout; IO alone misses blocks0 skipped by instant scrollTo. */
+  /** Sync `near` from layout; IO alone misses blocks skipped by instant scrollTo. Clears stale near so offscreen
+   *  batches do not compete with the current viewport after scroll. */
   function refreshNear() {
     if (off("gate") || !queue.length) return;
-    const m = innerHeight * 0.5;
+    const above = innerHeight * NEAR_ABOVE;
+    const below = innerHeight * NEAR_BELOW;
     for (const u of queue) {
       if (u.dead) continue;
       const r = u.el.getBoundingClientRect();
-      if (r.width && r.height && r.bottom >= -m && r.top <= innerHeight + m) u.near = true;
+      u.near = !!(r.width && r.height && r.bottom >= -above && r.top <= innerHeight + below);
     }
   }
 
   function kick() {
     refreshNear();
+    sortQueue();
     // 6 parallel requests: settle +2.3 s at 3, ×3 at 1
     const max = off("workers") ? 1 : isCursor() ? 2 : off("workers6") ? 3 : 6;
     for (let n = max - workers; n > 0 && queue.length; n--) worker(runId);
   }
 
-  /** Pull the next batch off the queue; units whose text is already in flight wait for the cache hit.
-   *  Char-packed 20-block batches: ablation showed 12-block batches cost +112 requests / +0.7 s settle, and
-   *  small first batches bought ~100 ms of first paint for +0.56 s settle and 4× the calls during an outage. */
+  function onScrollOrResize() {
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = 0;
+      kickNow();
+    });
+  }
+
+  /** Pull the next batch off the queue; in-viewport blocks beat prefetch margin so scroll never waits on below-fold work. */
   function nextBatch() {
     const batch = [];
     const size = off("batch") ? 1 : isCursor() ? 6 : 20;
     let chars = 0;
-    for (let i = 0; i < queue.length && batch.length < size; ) {
-      const u = queue[i];
-      if (u.dead) queue.splice(i, 1);
-      else if (!u.near || inflight.has(u.src) || (batch.length && chars + u.src.length > MAX_CHARS)) i += 1;
-      else {
-        queue.splice(i, 1);
-        batch.push(u);
-        chars += u.src.length;
+    const take = (onlyView) => {
+      for (let i = 0; i < queue.length && batch.length < size; ) {
+        const u = queue[i];
+        if (u.dead) queue.splice(i, 1);
+        else if (!u.near || inflight.has(u.src) || (onlyView && !inViewport(u.el)) || (batch.length && chars + u.src.length > MAX_CHARS))
+          i += 1;
+        else {
+          queue.splice(i, 1);
+          batch.push(u);
+          chars += u.src.length;
+        }
       }
-    }
+    };
+    take(true);
+    if (batch.length < size) take(false);
     return batch;
   }
 
@@ -396,7 +434,7 @@
     if (!dst && !u.retried && !off("missretry")) {
       u.retried = true;
       queue.unshift(u);
-      scheduleKick();
+      u.near ? kickNow() : scheduleKick();
       return;
     }
     if (!dst) return settle(u, "skip");
@@ -513,9 +551,10 @@
       mountUi();
       renderFab();
     }
-    await collect(document.body);
-    refreshNear();
-    kick();
+    const collecting = collect(document.body);
+    await frame();
+    kickNow();
+    await collecting;
     while (workers) await sleep(250);
     return { ok: true, translated: active, count: okCount() };
   }
@@ -530,12 +569,14 @@
     mo = null;
     io?.disconnect();
     io = null;
-    removeEventListener("scroll", scheduleKick);
-    removeEventListener("resize", scheduleKick);
+    removeEventListener("scroll", onScrollOrResize);
+    removeEventListener("resize", onScrollOrResize);
     clearTimeout(moTimer);
     moTimer = 0;
     clearTimeout(kickTimer);
     kickTimer = 0;
+    if (scrollRaf) cancelAnimationFrame(scrollRaf);
+    scrollRaf = 0;
     dirty.clear();
     for (const el of [...unitOf.keys()]) resetHost(el);
     renderFab();
@@ -594,12 +635,12 @@
     io = new IntersectionObserver((entries) => {
       for (const e of entries) {
         const u = unitOf.get(e.target);
-        if (u && e.isIntersecting) u.near = true;
+        if (u) u.near = e.isIntersecting;
       }
-      scheduleKick();
+      kickNow();
     }, NEAR);
-    addEventListener("scroll", scheduleKick, { passive: true });
-    addEventListener("resize", scheduleKick, { passive: true });
+    addEventListener("scroll", onScrollOrResize, { passive: true });
+    addEventListener("resize", onScrollOrResize, { passive: true });
   }
 
   /* ---------- cache: probation-first LFU-lite, phrases persisted ---------- */
