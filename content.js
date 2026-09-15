@@ -274,15 +274,18 @@
       const byId = new Map(rows.map((r) => [String(r.id), r.text]));
       for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
     } catch (e) {
-      if (my !== runId) return;
-      for (const it of items) {
-        failed.add(it.text);
-        for (const u of it.us) settle(u, "fail");
-      }
-      toast(String(e.message || e));
+      if (my === runId) failBatch(items, e);
     } finally {
       items.forEach((it) => inflight.delete(it.text));
     }
+  }
+
+  function failBatch(items, e) {
+    for (const it of items) {
+      failed.add(it.text);
+      for (const u of it.us) settle(u, "fail");
+    }
+    toast(String(e.message || e));
   }
 
   async function request(items) {
@@ -585,18 +588,21 @@
     return true;
   });
 
-  chrome.storage.onChanged.addListener((chg, area) => {
-    if (area !== "local") return;
+  /** Settings changed elsewhere (options page, popup): apply, then start/stop/restart as needed. */
+  function onSettingsChanged(chg) {
     if (chg[PBT.PN_STORE_KEY]) nouns = PBT.pnTermList(PBT.pnEnsureStore(chg[PBT.PN_STORE_KEY].newValue));
     for (const k of Object.keys(chg)) if (k in PBT.DEFAULTS) settings[k] = chg[k].newValue;
-    if (chg.serviceOn) {
-      if (settings.serviceOn && !active) start();
-      else if (!settings.serviceOn && active) restore();
-    } else if (active && (chg.targetLang || chg.engine || chg.excludeCss)) {
-      restore();
-      start();
-    }
-  });
+    const want = "serviceOn" in chg ? !!settings.serviceOn : active;
+    const restart = active && ["targetLang", "engine", "excludeCss"].some((k) => k in chg);
+    syncRun(want, restart);
+  }
+
+  function syncRun(want, restart) {
+    if (restart || (active && !want)) restore();
+    if (restart || (want && !active)) start();
+  }
+
+  chrome.storage.onChanged.addListener((chg, area) => area === "local" && onSettingsChanged(chg));
 
   addEventListener("pagehide", persistCache);
 
