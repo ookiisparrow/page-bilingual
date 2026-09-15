@@ -21,15 +21,18 @@
   const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|[a-z][\w.-]*\s*\/\s*[a-z][\w.-]*|[A-Z][A-Z-]*\/[A-Z][A-Z-]*)$/;
   // One all-lowercase or ALL-CAPS token; only an identifier when it names its own link target (see isPathLabel).
   const HANDLE = /^(?:[a-z][a-z-]*|[A-Z][A-Z-]+)$/;
-  const CACHE_KEY = "pbt.segCache.v2";
+  const CACHE_KEY = "pbt.segCache.v3"; // [key, text, hits][] — only sources ≤ CACHE_PERSIST_MAX chars are persisted
   const CACHE_CAP = 2000;
+  const CACHE_PERSIST_MAX = 200;
+  const CHEAP_MAX = 40; // tag-free Latin strings up to this length go to the on-device Translator when available
+  const NEAR = { rootMargin: "50% 0px" }; // viewport + half a screen of prefetch
   const MAX_CHARS = 3600;
   const MAX_HOST_CHARS = 4000;
   const SLICE_MS = 8; // collect work per frame
   const MO_OPTS = { childList: true, subtree: true };
 
   const unitOf = new Map(); // host element → unit
-  const cache = new Map(); // cacheKey → translation (insertion order = LRU)
+  const cache = new Map(); // cacheKey → { t: translation, f: hits }; f = 1 is probation, evicted first
   const dirty = new Set(); // mutation roots awaiting re-collect
   const thrash = new WeakMap(); // host → times the page rewrote it after we painted
   const inflight = new Set(); // source texts currently being requested
@@ -41,7 +44,10 @@
   let queue = [];
   let workers = 0;
   let mo = null;
+  let io = null; // marks queued units near the viewport; only those are requested
+  let translator = null; // Promise<Translator> when the on-device API can translate to the target language
   let moTimer = 0;
+  let kickTimer = 0;
   let persistTimer = 0;
   let collecting = Promise.resolve(); // collects run one at a time so a subtree is never wrapped twice
   const ui = {};
@@ -52,7 +58,8 @@
   const hasLetters = (n) => /\p{L}/u.test(n.textContent || "");
   const isCursor = () => /^(cursor|bridge)$/i.test(settings.engine || "");
   const engineId = () => (isCursor() ? `cursor:${settings.cursorModel}` : `deepseek:${settings.deepseekModel}`);
-  const cacheKey = (src) => `${settings.targetLang}|${engineId()}|${src}`;
+  const cacheKey = (src) => `${settings.targetLang}|${cheapFor(src) ? "translator" : engineId()}|${src}`;
+  const cheapFor = (src) => !off("cheap") && !!translator && src.length <= CHEAP_MAX && !/<b\d+>/.test(src) && /^[\x20-\x7E\u00C0-\u024F]+$/.test(src);
   const okCount = () => [...unitOf.values()].filter((u) => u.el.dataset.pbtState === "ok").length;
 
   function safeMatches(el, sel) {
@@ -201,18 +208,46 @@
     return r.width || r.height ? Math.abs((r.top + r.bottom) / 2 - innerHeight / 2) : Infinity;
   }
 
+  /** Cache hits paint at once wherever they are; the rest wait in the queue until the viewport gate marks them near. */
   function enqueue(units) {
     if (!units.length) return;
     for (const u of units) {
       u.el.dataset.pbtState = "queued";
       unitOf.set(u.el, u);
-      queue.push(u);
+      const hit = !off("cache") && cacheGet(u.src);
+      if (hit) paint(u, hit);
+      else {
+        queue.push(u);
+        if (io) io.observe(u.el);
+        else u.near = true;
+      }
     }
     // viewport-first order protects CLS (0.094 → 0.139 without it)
     if (!off("sort")) {
       const d = new Map(queue.map((u) => [u, distance(u.el)]));
       queue.sort((a, b) => d.get(a) - d.get(b));
     }
+    scheduleKick();
+  }
+
+  function scheduleKick() {
+    clearTimeout(kickTimer);
+    kickTimer = setTimeout(kick, 120);
+  }
+
+  /** Sync `near` from layout; IO alone misses blocks0 skipped by instant scrollTo. */
+  function refreshNear() {
+    if (off("gate") || !queue.length) return;
+    const m = innerHeight * 0.5;
+    for (const u of queue) {
+      if (u.dead) continue;
+      const r = u.el.getBoundingClientRect();
+      if (r.width && r.height && r.bottom >= -m && r.top <= innerHeight + m) u.near = true;
+    }
+  }
+
+  function kick() {
+    refreshNear();
     // 6 parallel requests: settle +2.3 s at 3, ×3 at 1
     const max = off("workers") ? 1 : isCursor() ? 2 : off("workers6") ? 3 : 6;
     for (let n = max - workers; n > 0 && queue.length; n--) worker(runId);
@@ -223,30 +258,28 @@
    *  small first batches bought ~100 ms of first paint for +0.56 s settle and 4× the calls during an outage. */
   function nextBatch() {
     const batch = [];
-    const deferred = [];
     const size = off("batch") ? 1 : isCursor() ? 6 : 20;
     let chars = 0;
-    while (queue.length && batch.length < size && (!batch.length || chars + queue[0].src.length <= MAX_CHARS)) {
-      const u = queue.shift();
-      if (u.dead) continue;
-      if (inflight.has(u.src)) deferred.push(u);
+    for (let i = 0; i < queue.length && batch.length < size; ) {
+      const u = queue[i];
+      if (u.dead) queue.splice(i, 1);
+      else if (!u.near || inflight.has(u.src) || (batch.length && chars + u.src.length > MAX_CHARS)) i += 1;
       else {
+        queue.splice(i, 1);
         batch.push(u);
         chars += u.src.length;
       }
     }
-    queue.push(...deferred);
     return batch;
   }
 
+  /** Runs until nothing near the viewport is left to request; the gate's callbacks kick new workers as blocks come into range. */
   async function worker(my) {
     workers += 1;
     try {
-      while (queue.length && my === runId) {
-        const batch = nextBatch();
-        if (batch.length) await translateBatch(batch, my);
-        else await sleep(50);
-      }
+      for (let batch; my === runId && (batch = nextBatch()).length; ) await translateBatch(batch, my);
+      refreshNear();
+      if (my === runId && queue.some((u) => u.near && !u.dead)) scheduleKick();
     } finally {
       // workers of a superseded run (restore → start) must not count against the new one
       if (my === runId) workers -= 1;
@@ -263,7 +296,7 @@
     }
     const items = [];
     for (const us of groups.values()) {
-      const hit = !off("cache") && cache.get(cacheKey(us[0].src));
+      const hit = !off("cache") && cacheGet(us[0].src);
       if (hit) us.forEach((u) => paint(u, hit));
       else if (gaveUp(us[0].src)) us.forEach((u) => settle(u, "fail"));
       else items.push({ id: String(items.length), text: us[0].src, us });
@@ -279,15 +312,44 @@
     const items = splitBatch(batch);
     if (!items.length) return;
     if (!off("dedupe")) items.forEach((it) => inflight.add(it.text));
+    let rest = items;
     try {
-      const rows = await request(items.map(({ id, text }) => ({ id, text })));
-      if (my !== runId) return;
-      const byId = new Map(rows.map((r) => [String(r.id), r.text]));
-      for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
+      rest = await cheapFirst(items, my);
+      if (rest.length) applyRows(rest, await request(rest.map(({ id, text }) => ({ id, text }))), my);
     } catch (e) {
-      if (my === runId) failBatch(items, e);
+      if (my === runId) failBatch(rest, e);
     } finally {
       items.forEach((it) => inflight.delete(it.text));
+    }
+  }
+
+  function applyRows(items, rows, my) {
+    if (my !== runId) return;
+    const byId = new Map(rows.map((r) => [String(r.id), r.text]));
+    for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
+  }
+
+  /** Short tag-free Latin strings (nav, buttons, labels) → on-device Translator (~50 ms, free); returns what still
+   *  needs the engine. Any Translator failure sends the whole cheap group to the engine — one fallback, no ladder. */
+  async function cheapFirst(items, my) {
+    const cheap = items.filter((it) => cheapFor(it.text));
+    if (!cheap.length) return items;
+    try {
+      const tr = await translator;
+      applyRows(cheap, await Promise.all(cheap.map(async (it) => ({ id: it.id, text: await tr.translate(it.text) }))), my);
+      return items.filter((it) => !cheap.includes(it));
+    } catch {
+      return items;
+    }
+  }
+
+  async function initTranslator() {
+    translator = null;
+    try {
+      const opts = { sourceLanguage: "en", targetLanguage: /^zh-TW/i.test(settings.targetLang) ? "zh-Hant" : settings.targetLang.slice(0, 2) };
+      if ((await Translator.availability(opts)) === "available") translator = Translator.create(opts);
+    } catch {
+      /* no on-device model for this pair: everything goes to the engine */
     }
   }
 
@@ -334,15 +396,17 @@
     if (!dst && !u.retried && !off("missretry")) {
       u.retried = true;
       queue.unshift(u);
+      scheduleKick();
       return;
     }
     if (!dst) return settle(u, "skip");
-    if (!off("cache")) remember(cacheKey(u.src), dst);
+    if (!off("cache")) remember(u.src, dst);
     paint(u, dst);
   }
 
   function settle(u, state) {
     u.el.dataset.pbtState = state;
+    io?.unobserve(u.el);
   }
 
   /* ---------- paint ---------- */
@@ -421,6 +485,7 @@
     u.created = [];
     write(u, u.el, parts);
     u.el.dataset.pbtState = "ok";
+    io?.unobserve(u.el);
     if (!off("selfignore")) mo?.takeRecords();
   }
 
@@ -428,6 +493,7 @@
     const u = unitOf.get(el);
     if (!u) return;
     u.dead = true;
+    io?.unobserve(el);
     u.created?.forEach((n) => n.remove());
     u.snap?.forEach(([n, d]) => (n.data = d));
     delete el.dataset.pbtState;
@@ -443,9 +509,12 @@
       active = true;
       runId += 1;
       observe();
+      gate();
       renderFab();
     }
     await collect(document.body);
+    refreshNear();
+    kick();
     while (workers) await sleep(250);
     return { ok: true, translated: active, count: okCount() };
   }
@@ -458,8 +527,14 @@
     workers = 0;
     mo?.disconnect();
     mo = null;
+    io?.disconnect();
+    io = null;
+    removeEventListener("scroll", scheduleKick);
+    removeEventListener("resize", scheduleKick);
     clearTimeout(moTimer);
     moTimer = 0;
+    clearTimeout(kickTimer);
+    kickTimer = 0;
     dirty.clear();
     for (const el of [...unitOf.keys()]) resetHost(el);
     renderFab();
@@ -511,28 +586,69 @@
     mo.observe(document.body, MO_OPTS);
   }
 
-  /* ---------- cache ---------- */
+  /** Viewport gate: a queued block is requested only while it is within half a screen of the viewport; blocks
+   *  that scroll away before their batch starts simply wait, and come back when they re-enter. */
+  function gate() {
+    if (io || off("gate")) return;
+    io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const u = unitOf.get(e.target);
+        if (u && e.isIntersecting) u.near = true;
+      }
+      scheduleKick();
+    }, NEAR);
+    addEventListener("scroll", scheduleKick, { passive: true });
+    addEventListener("resize", scheduleKick, { passive: true });
+  }
+
+  /* ---------- cache: probation-first LFU-lite, phrases persisted ---------- */
 
   async function loadCache() {
     try {
       const d = await chrome.storage.local.get(CACHE_KEY);
-      for (const [k, v] of d[CACHE_KEY] || []) cache.set(k, v);
-      chrome.storage.local.remove("pbt.segCache.v1");
+      for (const [k, t, f] of d[CACHE_KEY] || []) cache.set(k, { t, f });
+      chrome.storage.local.remove(["pbt.segCache.v1", "pbt.segCache.v2"]);
     } catch {
       /* optional */
     }
   }
 
-  function remember(k, v) {
+  /** Hit: bump the count and move to the end (recency). */
+  function cacheGet(src) {
+    const k = cacheKey(src);
+    const e = cache.get(k);
+    if (!e) return null;
+    e.f += 1;
     cache.delete(k);
-    cache.set(k, v);
-    while (cache.size > CACHE_CAP) cache.delete(cache.keys().next().value);
+    cache.set(k, e);
+    return e.t;
+  }
+
+  function remember(src, t) {
+    const k = cacheKey(src);
+    const f = (cache.get(k)?.f || 0) + 1;
+    cache.delete(k);
+    cache.set(k, { t, f });
+    if (cache.size > CACHE_CAP) evict();
     clearTimeout(persistTimer);
     persistTimer = setTimeout(persistCache, 2000);
   }
 
+  /** Oldest one-hit (probation) entry first, else the least-used. */
+  function evict() {
+    let minK;
+    let minF = Infinity;
+    for (const [k, e] of cache) {
+      if (e.f <= 1) return cache.delete(k);
+      if (e.f < minF) [minK, minF] = [k, e.f];
+    }
+    cache.delete(minK);
+  }
+
+  /** Durable store stays phrase-heavy: memory may hold long paragraphs, disk keeps sources ≤ 200 chars. */
   function persistCache() {
-    chrome.storage.local.set({ [CACHE_KEY]: [...cache] }).catch(() => {});
+    const rows = [...cache].filter(([k]) => k.length - k.lastIndexOf("|") - 1 <= CACHE_PERSIST_MAX).map(([k, e]) => [k, e.t, e.f]);
+    chrome.storage.local.set({ [CACHE_KEY]: rows }).catch(() => {});
   }
 
   /* ---------- UI: one toggle button, one error toast ---------- */
@@ -599,6 +715,7 @@
   function onSettingsChanged(chg) {
     if (chg[PBT.PN_STORE_KEY]) nouns = PBT.pnTermList(PBT.pnEnsureStore(chg[PBT.PN_STORE_KEY].newValue));
     for (const k of Object.keys(chg)) if (k in PBT.DEFAULTS) settings[k] = chg[k].newValue;
+    if (chg.targetLang) initTranslator();
     const want = "serviceOn" in chg ? !!settings.serviceOn : active;
     const restart = active && ["targetLang", "engine", "excludeCss"].some((k) => k in chg);
     syncRun(want, restart);
@@ -616,7 +733,7 @@
   PBT.settings().then(async (s) => {
     settings = s;
     nouns = PBT.pnTermList(await PBT.pnLoad());
-    await loadCache();
+    await Promise.all([loadCache(), initTranslator()]);
     mountUi();
     // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches (repaints +4 without it)
     if (!settings.serviceOn) return;
