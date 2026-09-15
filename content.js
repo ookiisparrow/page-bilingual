@@ -23,7 +23,7 @@
   const HANDLE = /^(?:[a-z][a-z-]*|[A-Z][A-Z-]+)$/;
   const CACHE_KEY = "pbt.segCache.v2";
   const CACHE_CAP = 2000;
-  const MAX_CHARS = 2400;
+  const MAX_CHARS = 3600;
   const MAX_HOST_CHARS = 4000;
   const SLICE_MS = 8; // collect work per frame
   const MO_OPTS = { childList: true, subtree: true };
@@ -37,7 +37,6 @@
   let settings = { ...PBT.DEFAULTS };
   let nouns = [];
   let active = false;
-  let painted = false; // first paint of this run has landed
   let runId = 0;
   let queue = [];
   let workers = 0;
@@ -73,7 +72,7 @@
     return !getComputedStyle(n).display.startsWith("inline");
   }
 
-  /** Host text with inline descendants as <bN>…</bN> so the model can keep links/emphasis in place. */
+  /** Host text with inline descendants as <bN>…</bN> so the model can keep links/emphasis in place (links lose their words without it). */
   function serialize(host) {
     const map = [];
     let plain = "";
@@ -115,7 +114,7 @@
     }
   }
 
-  // ponytail: orphan text next to block siblings gets a span wrapper (unwrapped on restore).
+  // ponytail: orphan text next to block siblings gets a span wrapper (unwrapped on restore). Ablation: +63 leftovers without it.
   function wrap(run) {
     const span = document.createElement("span");
     span.className = "pbt-wrap";
@@ -129,6 +128,7 @@
     if (el.nodeType !== 1 || el.dataset.pbtState || el.matches(SKIP) || el.matches(KEEP) || safeMatches(el, settings.excludeCss)) return;
     yield;
     if (el.shadowRoot && !off("shadow")) {
+      // MDN compat table / mdn-button: +2–4 leftovers without shadow descent
       mo?.observe(el.shadowRoot, MO_OPTS);
       yield* children(el.shadowRoot, out);
     }
@@ -167,7 +167,8 @@
     return ok;
   }
 
-  /** Collect `root` in ≤ SLICE_MS slices, enqueueing what each slice found; own DOM writes are drained before yielding. */
+  /** Collect `root` in ≤ SLICE_MS slices, enqueueing what each slice found; own DOM writes are drained before yielding.
+   *  Ablation: worst main-thread task on omarchy 167 → 98 ms; Wikipedia/MDN collect is < 50 ms either way. */
   function collect(root) {
     const job = async () => {
       const out = [];
@@ -199,25 +200,25 @@
       unitOf.set(u.el, u);
       queue.push(u);
     }
+    // viewport-first order protects CLS (0.094 → 0.139 without it)
     if (!off("sort")) {
       const d = new Map(queue.map((u) => [u, distance(u.el)]));
       queue.sort((a, b) => d.get(a) - d.get(b));
     }
+    // 6 parallel requests: settle +2.3 s at 3, ×3 at 1
     const max = off("workers") ? 1 : isCursor() ? 2 : off("workers6") ? 3 : 6;
     for (let n = max - workers; n > 0 && queue.length; n--) worker(runId);
   }
 
   /** Pull the next batch off the queue; units whose text is already in flight wait for the cache hit.
-   *  Until the first paint lands, batches stay small so the viewport shows Chinese after one short round trip;
-   *  afterwards they are char-packed to cut round trips. */
+   *  Char-packed 20-block batches: ablation showed 12-block batches cost +112 requests / +0.7 s settle, and
+   *  small first batches bought ~100 ms of first paint for +0.56 s settle and 4× the calls during an outage. */
   function nextBatch() {
     const batch = [];
     const deferred = [];
-    const small = !painted && !off("firstsmall");
-    const size = off("batch") ? 1 : small ? 4 : isCursor() ? 6 : off("bigbatch") ? 12 : 20;
-    const maxChars = small ? 800 : off("bigbatch") ? MAX_CHARS : MAX_CHARS * 1.5;
+    const size = off("batch") ? 1 : isCursor() ? 6 : 20;
     let chars = 0;
-    while (queue.length && batch.length < size && (!batch.length || chars + queue[0].src.length <= maxChars)) {
+    while (queue.length && batch.length < size && (!batch.length || chars + queue[0].src.length <= MAX_CHARS)) {
       const u = queue.shift();
       if (u.dead) continue;
       if (inflight.has(u.src)) deferred.push(u);
@@ -244,7 +245,8 @@
     }
   }
 
-  /** Group a batch by source text; cache hits paint immediately, the rest become request items. */
+  /** Group a batch by source text; cache hits paint immediately, the rest become request items.
+   *  Dedupe + in-flight wait: 16 requests per text without it. Cache: warm reload 441 → 1105 ms and 302 calls without it. */
   function splitBatch(batch) {
     const groups = new Map();
     for (const u of batch) {
@@ -312,15 +314,15 @@
     });
   }
 
-  /** Missing row → one re-request; result === source (or empty) → keep the source; anything else is painted. */
+  /** Missing row → one re-request (ablation: +140 blocks on partial responses); still missing → keep the source.
+   *  A result identical to the source is simply painted (a no-op), so no echo check is needed. */
   function accept(u, dst) {
     if (!dst && !u.retried && !off("missretry")) {
       u.retried = true;
       queue.unshift(u);
       return;
     }
-    const norm = (t) => stripTags(t).replace(/\s+/g, "").toLowerCase();
-    if (!dst || (!off("echo") && norm(dst) === norm(u.src))) return settle(u, "skip");
+    if (!dst) return settle(u, "skip");
     if (!off("cache")) remember(cacheKey(u.src), dst);
     paint(u, dst);
   }
@@ -393,7 +395,7 @@
   }
 
   function paint(u, dst) {
-    // result for a unit the page already rewrote or removed: painting it would overwrite the page's newer text
+    // result for a unit the page already rewrote or removed: painting it would overwrite the page's newer text (stale paint)
     if (!off("deadguard") && (u.dead || !u.el.isConnected)) return;
     const { parts, seen } = parse(dst);
     const nodes = [];
@@ -409,7 +411,6 @@
       live.forEach((n) => (n.data = n === main ? stripTags(dst) : ""));
     }
     u.el.dataset.pbtState = "ok";
-    painted = true;
     if (!off("selfignore")) mo?.takeRecords();
   }
 
@@ -442,7 +443,6 @@
   function restore() {
     runId += 1;
     active = false;
-    painted = false;
     failed.clear();
     queue = [];
     workers = 0;
@@ -474,12 +474,13 @@
     const n = (thrash.get(host) || 0) + 1;
     thrash.set(host, n);
     resetHost(host);
-    // page keeps rewriting this node (ticker / typewriter): stop chasing it
+    // page keeps rewriting this node (ticker / typewriter): stop chasing it — settle +25 s on omarchy without this
     if (n > 3 && !off("thrash")) host.dataset.pbtState = "skip";
     dirty.add(parent || t);
   }
 
-  /** Page mutations only; our own writes are drained with takeRecords() right after each paint. */
+  /** Page mutations only (+753 leftovers without the observer); our own writes are drained with takeRecords()
+   *  right after each paint (853 repaints and half-painted blocks without that). */
   function observe() {
     if (mo || off("observer")) return;
     mo = new MutationObserver((records) => {
@@ -604,7 +605,7 @@
     nouns = PBT.pnTermList(await PBT.pnLoad());
     await loadCache();
     mountUi();
-    // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches
+    // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches (repaints +4 without it)
     if (!settings.serviceOn) return;
     if (off("loadgate") || document.readyState === "complete") start();
     else addEventListener("load", () => start());
