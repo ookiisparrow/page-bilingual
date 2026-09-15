@@ -152,7 +152,7 @@ function buildPrompt(targetLang, items, page, properNouns) {
     `把下面网页段落翻译成「${targetLang}」。\n` +
     (zh ? "译文必须是中文，禁止原样返回英文，禁止中英混抄整句。\n" : `Output language must be ${targetLang}, not the source language.\n`) +
     "人名与品牌名必须原样保留（勿翻译、勿音译），即使未出现在白名单中；例如 Tim Cook、Nike、Spotify。专有名词、代码、数字可保留。\n" +
-    "文本中的 <b1>…</b1>、<b2>…</b2> 是行内格式标记：必须原样保留，成对出现，数量与嵌套不变，不可增删；标记内的文字照常翻译。\n" +
+    "文本中的 §1§…§/1§、§2§…§/2§ 是行内占位符：必须原样保留，成对出现，数量与嵌套不变，不可增删；占位符内的文字照常翻译。\n" +
     `只输出 JSON 数组：[{"id":"...","text":"译文"}]。id/顺序/数量必须与输入一致。\n` +
     (where ? `页面: ${where}\n` : "") +
     (properNouns.length ? "专有名词白名单（原样保留，勿翻译、勿音译）:\n" + properNouns.slice(0, 80).map((t) => `- ${t}`).join("\n") + "\n" : "") +
@@ -178,7 +178,7 @@ async function chatCompletions(s, items, page, cfg) {
     {
       role: "system",
       content:
-        "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。人名与品牌名一律原样保留。<bN>…</bN> 标记原样保留。",
+        "你是网页翻译器。只输出 JSON 数组 [{id,text}]，不要 markdown。目标语言必须是用户指定语言；若目标是中文，text 必须是中文。人名与品牌名一律原样保留。§N§…§/N§ 占位符原样保留。",
     },
     { role: "user", content: buildPrompt(s.targetLang, items, page, s.properNouns) },
   ];
