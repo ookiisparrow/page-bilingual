@@ -510,6 +510,7 @@
       runId += 1;
       observe();
       gate();
+      mountUi();
       renderFab();
     }
     await collect(document.body);
@@ -732,9 +733,10 @@
 
   PBT.settings().then(async (s) => {
     settings = s;
-    nouns = PBT.pnTermList(await PBT.pnLoad());
-    await Promise.all([loadCache(), initTranslator()]);
     mountUi();
+    nouns = PBT.pnTermList(await PBT.pnLoad());
+    await loadCache();
+    initTranslator();
     // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches (repaints +4 without it)
     if (!settings.serviceOn) return;
     if (off("loadgate") || document.readyState === "complete") start();

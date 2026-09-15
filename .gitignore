@@ -6,6 +6,7 @@ local-key.js
 
 # packs / chrome
 *.crx
+scripts/.pack-key.pem
 .chrome-profile/
 page-bilingual-chrome-profile/
 **/chrome-profile/
