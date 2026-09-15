@@ -235,7 +235,19 @@
     kickTimer = setTimeout(kick, 120);
   }
 
+  /** Sync `near` from layout; IO alone misses blocks0 skipped by instant scrollTo. */
+  function refreshNear() {
+    if (off("gate") || !queue.length) return;
+    const m = innerHeight * 0.5;
+    for (const u of queue) {
+      if (u.dead) continue;
+      const r = u.el.getBoundingClientRect();
+      if (r.width && r.height && r.bottom >= -m && r.top <= innerHeight + m) u.near = true;
+    }
+  }
+
   function kick() {
+    refreshNear();
     // 6 parallel requests: settle +2.3 s at 3, ×3 at 1
     const max = off("workers") ? 1 : isCursor() ? 2 : off("workers6") ? 3 : 6;
     for (let n = max - workers; n > 0 && queue.length; n--) worker(runId);
@@ -266,6 +278,8 @@
     workers += 1;
     try {
       for (let batch; my === runId && (batch = nextBatch()).length; ) await translateBatch(batch, my);
+      refreshNear();
+      if (my === runId && queue.some((u) => u.near && !u.dead)) scheduleKick();
     } finally {
       // workers of a superseded run (restore → start) must not count against the new one
       if (my === runId) workers -= 1;
@@ -499,6 +513,8 @@
       renderFab();
     }
     await collect(document.body);
+    refreshNear();
+    kick();
     while (workers) await sleep(250);
     return { ok: true, translated: active, count: okCount() };
   }
@@ -513,6 +529,8 @@
     mo = null;
     io?.disconnect();
     io = null;
+    removeEventListener("scroll", scheduleKick);
+    removeEventListener("resize", scheduleKick);
     clearTimeout(moTimer);
     moTimer = 0;
     clearTimeout(kickTimer);
@@ -575,10 +593,12 @@
     io = new IntersectionObserver((entries) => {
       for (const e of entries) {
         const u = unitOf.get(e.target);
-        if (u) u.near = e.isIntersecting;
+        if (u && e.isIntersecting) u.near = true;
       }
       scheduleKick();
     }, NEAR);
+    addEventListener("scroll", scheduleKick, { passive: true });
+    addEventListener("resize", scheduleKick, { passive: true });
   }
 
   /* ---------- cache: probation-first LFU-lite, phrases persisted ---------- */
