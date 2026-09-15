@@ -257,13 +257,15 @@
     for (const us of groups.values()) {
       const hit = !off("cache") && cache.get(cacheKey(us[0].src));
       if (hit) us.forEach((u) => paint(u, hit));
-      // a text that failed twice this run is not requested again by its other copies: an outage costs ≤ 4 calls per text
-      // (was 24), while one more copy may still recover from a transient error (flaky engine: +11 % blocks vs a hard memo)
-      else if ((failed.get(us[0].src) || 0) >= 2 && !off("failmemo")) us.forEach((u) => settle(u, "fail"));
+      else if (gaveUp(us[0].src)) us.forEach((u) => settle(u, "fail"));
       else items.push({ id: String(items.length), text: us[0].src, us });
     }
     return items;
   }
+
+  /** A text that failed twice this run is not requested again by its other copies: an outage costs ≤ 4 calls per
+   *  text (was 24), while one more copy may still recover from a transient error (flaky engine: +11 % blocks vs a hard memo). */
+  const gaveUp = (src) => !off("failmemo") && (failed.get(src) || 0) >= 2;
 
   async function translateBatch(batch, my) {
     const items = splitBatch(batch);
