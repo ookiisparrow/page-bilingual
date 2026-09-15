@@ -2,6 +2,10 @@
   if (window.__pbtLoaded) return;
   window.__pbtLoaded = true;
 
+  // Ablation switches (test builds fill this set; empty in the shipped file). See docs/ablation-1.4.56.md.
+  const ABLATE = new Set();
+  const off = (name) => ABLATE.has(name);
+
   // Never collected; omitted from a host's source text when inline.
   const SKIP =
     "script,style,noscript,template,svg,math,canvas,iframe,video,audio,pre,textarea,input,select,option,[contenteditable],#pbt-root";
@@ -12,15 +16,16 @@
   );
   const INLINE_TAGS = new Set("EM STRONG B I U S SMALL MARK ABBR SUP SUB Q CITE DEL INS BR WBR IMG PICTURE SVG CODE KBD SAMP VAR TIME".split(" "));
   const TARGET_SCRIPT = { zh: /[\u4e00-\u9fff]/, ja: /[\u3040-\u30ff]/, ko: /[\uac00-\ud7af]/, en: /[A-Za-z]/ };
-  // URLs, emails, identifiers and paths: one token that is dotted / digit- or underscore-bearing
-  // (README.md, v1), or two tokens joined by a slash (omacom / omarchy, CI/CD).
-  const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|\S+\s*\/\s*\S+)$/i;
+  // URLs, emails, identifiers and paths: one token that is dotted / digit- or underscore-bearing (README.md, v1),
+  // or two same-case tokens joined by a slash (omacom / omarchy, agents/skills, CI/CD — but not the UI label Print/export).
+  const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|[a-z][\w.-]*\s*\/\s*[a-z][\w.-]*|[A-Z][A-Z-]*\/[A-Z][A-Z-]*)$/;
   // One all-lowercase or ALL-CAPS token; only an identifier when it names its own link target (see isPathLabel).
   const HANDLE = /^(?:[a-z][a-z-]*|[A-Z][A-Z-]+)$/;
   const CACHE_KEY = "pbt.segCache.v2";
   const CACHE_CAP = 2000;
-  const MAX_CHARS = 2400;
+  const MAX_CHARS = 3600;
   const MAX_HOST_CHARS = 4000;
+  const SLICE_MS = 8; // collect work per frame
   const MO_OPTS = { childList: true, subtree: true };
 
   const unitOf = new Map(); // host element → unit
@@ -28,6 +33,7 @@
   const dirty = new Set(); // mutation roots awaiting re-collect
   const thrash = new WeakMap(); // host → times the page rewrote it after we painted
   const inflight = new Set(); // source texts currently being requested
+  const failed = new Map(); // source text → failed requests this run
   let settings = { ...PBT.DEFAULTS };
   let nouns = [];
   let active = false;
@@ -37,9 +43,11 @@
   let mo = null;
   let moTimer = 0;
   let persistTimer = 0;
+  let collecting = Promise.resolve(); // collects run one at a time so a subtree is never wrapped twice
   const ui = {};
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const frame = () => new Promise((r) => requestAnimationFrame(r));
   const stripTags = (s) => String(s || "").replace(/<\/?b\d+>/g, "");
   const hasLetters = (n) => /\p{L}/u.test(n.textContent || "");
   const isCursor = () => /^(cursor|bridge)$/i.test(settings.engine || "");
@@ -64,7 +72,7 @@
     return !getComputedStyle(n).display.startsWith("inline");
   }
 
-  /** Host text with inline descendants as <bN>…</bN> so the model can keep links/emphasis in place. */
+  /** Host text with inline descendants as <bN>…</bN> so the model can keep links/emphasis in place (links lose their words without it). */
   function serialize(host) {
     const map = [];
     let plain = "";
@@ -82,31 +90,39 @@
       }
       return s;
     };
-    const src = walk(host, false).replace(/\s+/g, " ").trim();
-    return { el: host, src, map, plain: plain.trim() };
+    const tagged = walk(host, false).replace(/\s+/g, " ").trim();
+    return { el: host, src: off("tags") ? stripTags(tagged) : tagged, map, plain: plain.trim() };
   }
 
   function needsTranslate(u) {
     const t = u.plain;
     const letters = t.match(/\p{L}/gu) || [];
-    if (letters.length < 2 || NOISE.test(t) || isPathLabel(u.el, t)) return false;
+    if (letters.length < 2 || (!off("identifier") && (NOISE.test(t) || isPathLabel(u.el, t)))) return false;
     const re = TARGET_SCRIPT[settings.targetLang.slice(0, 2)];
     return !re || letters.filter((c) => re.test(c)).length / letters.length < 0.5;
   }
 
-  /** `bin` → /tree/quattro/bin, `ryanrhughes` → /ryanrhughes: the label is the last path segment of its own link.
-   *  `edit` → ?action=edit and an href-less `hide` button are UI words and get translated. */
+  /** A lowercase/ALL-CAPS label is an identifier when it names its own link target — last path segment (`bin` →
+   *  /tree/quattro/bin) or last query value (`ryanrhughes` → ?author=ryanrhughes) — or, for an href-less control, a path
+   *  segment of any link on the page (branch button `quattro` → /tree/quattro/…). Wikipedia's `[edit]`
+   *  (…&action=edit&section=1 → last value "1") and the `hide` button (no /hide/ path) stay UI words and translate. */
   function isPathLabel(el, t) {
     if (!HANDLE.test(t)) return false;
-    const a = el.matches("a[href]") ? el : el.querySelector("a[href]");
-    try {
-      return !!a && decodeURIComponent(new URL(a.href).pathname).split("/").filter(Boolean).pop()?.toLowerCase() === t.toLowerCase();
-    } catch {
-      return false;
-    }
+    const own = el.matches("a[href]") ? el : el.querySelector("a[href]");
+    const key = t.toLowerCase();
+    const names = (a) => {
+      try {
+        const u = new URL(a.href);
+        const segs = decodeURIComponent(u.pathname).split("/").filter(Boolean);
+        return own ? [segs.pop(), [...u.searchParams.values()].pop()] : segs;
+      } catch {
+        return [];
+      }
+    };
+    return (own ? [own] : [...document.links]).some((a) => names(a).some((s) => s?.toLowerCase() === key));
   }
 
-  // ponytail: orphan text next to block siblings gets a span wrapper (unwrapped on restore).
+  // ponytail: orphan text next to block siblings gets a span wrapper (unwrapped on restore). Ablation: +63 leftovers without it.
   function wrap(run) {
     const span = document.createElement("span");
     span.className = "pbt-wrap";
@@ -115,45 +131,67 @@
     return span;
   }
 
-  function collect(root, out) {
-    const push = (el) => {
-      const u = serialize(el);
-      const ok = needsTranslate(u) && u.plain.length <= MAX_HOST_CHARS;
-      if (ok) out.push(u);
-      return ok;
-    };
-    const visit = (el) => {
-      if (el.nodeType !== 1 || el.dataset.pbtState || el.matches(SKIP) || el.matches(KEEP) || safeMatches(el, settings.excludeCss)) return;
-      if (el.shadowRoot) {
-        mo?.observe(el.shadowRoot, MO_OPTS);
-        children(el.shadowRoot);
-      }
-      children(el);
-    };
-    const children = (el) => {
-      const kids = [...el.childNodes];
-      if (!kids.some(isBlockBox)) {
-        if (el.nodeType === 1) push(el);
-        return;
-      }
-      let run = [];
-      const flush = () => {
-        const span = run.some((n) => n.nodeType === 3 && hasLetters(n)) && wrap(run);
-        if (!span || !push(span)) {
-          if (span) span.replaceWith(...span.childNodes);
-          run.forEach((n) => n.nodeType === 1 && visit(n));
-        }
+  /** Depth-first walk as a generator so the driver can yield to the frame between elements. */
+  function* visit(el, out) {
+    if (el.nodeType !== 1 || el.dataset.pbtState || el.matches(SKIP) || el.matches(KEEP) || safeMatches(el, settings.excludeCss)) return;
+    yield;
+    if (el.shadowRoot && !off("shadow")) {
+      // MDN compat table / mdn-button: +2–4 leftovers without shadow descent
+      mo?.observe(el.shadowRoot, MO_OPTS);
+      yield* children(el.shadowRoot, out);
+    }
+    yield* children(el, out);
+  }
+
+  function* children(el, out) {
+    const kids = [...el.childNodes];
+    if (!kids.some(isBlockBox)) {
+      if (el.nodeType === 1) push(el, out);
+      return;
+    }
+    let run = [];
+    for (const n of kids) {
+      if (isBlockBox(n)) {
+        yield* flush(run, out);
         run = [];
-      };
-      for (const n of kids) {
-        if (isBlockBox(n)) {
-          flush();
-          visit(n);
-        } else run.push(n);
+        yield* visit(n, out);
+      } else run.push(n);
+    }
+    yield* flush(run, out);
+  }
+
+  /** An inline run between block siblings: wrap it into one unit if it carries text, else visit its elements. */
+  function* flush(run, out) {
+    const span = !off("wrap") && run.some((n) => n.nodeType === 3 && hasLetters(n)) && wrap(run);
+    if (span && push(span, out)) return;
+    if (span) span.replaceWith(...span.childNodes);
+    for (const n of run) if (n.nodeType === 1) yield* visit(n, out);
+  }
+
+  function push(el, out) {
+    const u = serialize(el);
+    const ok = needsTranslate(u) && u.plain.length <= MAX_HOST_CHARS;
+    if (ok) out.push(u);
+    return ok;
+  }
+
+  /** Collect `root` in ≤ SLICE_MS slices, enqueueing what each slice found; own DOM writes are drained before yielding.
+   *  Ablation: worst main-thread task on omarchy 167 → 98 ms; Wikipedia/MDN collect is < 50 ms either way. */
+  function collect(root) {
+    const job = async () => {
+      const out = [];
+      let deadline = performance.now() + SLICE_MS;
+      for (const it = visit(root, out); !it.next().done; ) {
+        if (off("chunk") || performance.now() < deadline) continue;
+        mo?.takeRecords();
+        enqueue(out.splice(0));
+        await frame();
+        deadline = performance.now() + SLICE_MS;
       }
-      flush();
+      mo?.takeRecords();
+      enqueue(out);
     };
-    visit(root);
+    return (collecting = collecting.then(job, job));
   }
 
   /* ---------- queue: viewport-first, dedupe, cache ---------- */
@@ -164,35 +202,48 @@
   }
 
   function enqueue(units) {
+    if (!units.length) return;
     for (const u of units) {
       u.el.dataset.pbtState = "queued";
       unitOf.set(u.el, u);
       queue.push(u);
     }
-    const d = new Map(queue.map((u) => [u, distance(u.el)]));
-    queue.sort((a, b) => d.get(a) - d.get(b));
-    for (let n = (isCursor() ? 2 : 3) - workers; n > 0 && queue.length; n--) worker(runId);
+    // viewport-first order protects CLS (0.094 → 0.139 without it)
+    if (!off("sort")) {
+      const d = new Map(queue.map((u) => [u, distance(u.el)]));
+      queue.sort((a, b) => d.get(a) - d.get(b));
+    }
+    // 6 parallel requests: settle +2.3 s at 3, ×3 at 1
+    const max = off("workers") ? 1 : isCursor() ? 2 : off("workers6") ? 3 : 6;
+    for (let n = max - workers; n > 0 && queue.length; n--) worker(runId);
+  }
+
+  /** Pull the next batch off the queue; units whose text is already in flight wait for the cache hit.
+   *  Char-packed 20-block batches: ablation showed 12-block batches cost +112 requests / +0.7 s settle, and
+   *  small first batches bought ~100 ms of first paint for +0.56 s settle and 4× the calls during an outage. */
+  function nextBatch() {
+    const batch = [];
+    const deferred = [];
+    const size = off("batch") ? 1 : isCursor() ? 6 : 20;
+    let chars = 0;
+    while (queue.length && batch.length < size && (!batch.length || chars + queue[0].src.length <= MAX_CHARS)) {
+      const u = queue.shift();
+      if (u.dead) continue;
+      if (inflight.has(u.src)) deferred.push(u);
+      else {
+        batch.push(u);
+        chars += u.src.length;
+      }
+    }
+    queue.push(...deferred);
+    return batch;
   }
 
   async function worker(my) {
     workers += 1;
     try {
       while (queue.length && my === runId) {
-        const batch = [];
-        const deferred = [];
-        let chars = 0;
-        while (queue.length && batch.length < (isCursor() ? 6 : 12) && (!batch.length || chars + queue[0].src.length <= MAX_CHARS)) {
-          const u = queue.shift();
-          if (u.dead) continue;
-          // same text already in flight in another worker: wait for it and take the cache hit
-          if (inflight.has(u.src)) {
-            deferred.push(u);
-            continue;
-          }
-          batch.push(u);
-          chars += u.src.length;
-        }
-        queue.push(...deferred);
+        const batch = nextBatch();
         if (batch.length) await translateBatch(batch, my);
         else await sleep(50);
       }
@@ -202,29 +253,50 @@
     }
   }
 
-  async function translateBatch(batch, my) {
+  /** Group a batch by source text; cache hits paint immediately, the rest become request items.
+   *  Dedupe + in-flight wait: 16 requests per text without it. Cache: warm reload 441 → 1105 ms and 302 calls without it. */
+  function splitBatch(batch) {
     const groups = new Map();
-    for (const u of batch) (groups.get(u.src) || groups.set(u.src, []).get(u.src)).push(u);
-    const items = [];
-    for (const [src, us] of groups) {
-      const hit = cache.get(cacheKey(src));
-      if (hit) us.forEach((u) => paint(u, hit));
-      else items.push({ id: String(items.length), text: src, us });
+    for (const u of batch) {
+      const key = off("dedupe") ? u : u.src;
+      (groups.get(key) || groups.set(key, []).get(key)).push(u);
     }
+    const items = [];
+    for (const us of groups.values()) {
+      const hit = !off("cache") && cache.get(cacheKey(us[0].src));
+      if (hit) us.forEach((u) => paint(u, hit));
+      else if (gaveUp(us[0].src)) us.forEach((u) => settle(u, "fail"));
+      else items.push({ id: String(items.length), text: us[0].src, us });
+    }
+    return items;
+  }
+
+  /** A text that failed twice this run is not requested again by its other copies: an outage costs ≤ 4 calls per
+   *  text (was 24), while one more copy may still recover from a transient error (flaky engine: +11 % blocks vs a hard memo). */
+  const gaveUp = (src) => !off("failmemo") && (failed.get(src) || 0) >= 2;
+
+  async function translateBatch(batch, my) {
+    const items = splitBatch(batch);
     if (!items.length) return;
-    items.forEach((it) => inflight.add(it.text));
+    if (!off("dedupe")) items.forEach((it) => inflight.add(it.text));
     try {
       const rows = await request(items.map(({ id, text }) => ({ id, text })));
       if (my !== runId) return;
       const byId = new Map(rows.map((r) => [String(r.id), r.text]));
       for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
     } catch (e) {
-      if (my !== runId) return;
-      for (const it of items) for (const u of it.us) settle(u, "fail");
-      toast(String(e.message || e));
+      if (my === runId) failBatch(items, e);
     } finally {
       items.forEach((it) => inflight.delete(it.text));
     }
+  }
+
+  function failBatch(items, e) {
+    for (const it of items) {
+      failed.set(it.text, (failed.get(it.text) || 0) + 1);
+      for (const u of it.us) settle(u, "fail");
+    }
+    toast(String(e.message || e));
   }
 
   async function request(items) {
@@ -233,7 +305,7 @@
       type: "PBT_BATCH",
       items,
       targetLang: settings.targetLang,
-      properNouns: nouns.filter((t) => blob.includes(t.toLowerCase())).slice(0, 80),
+      properNouns: off("nouns") ? [] : nouns.filter((t) => blob.includes(t.toLowerCase())).slice(0, 80),
       page: { title: document.title, host: location.host },
     };
     const res = await withTimeout(chrome.runtime.sendMessage(msg), 100000, "扩展后台超时 100s（翻译引擎无响应）").catch((e) => {
@@ -256,11 +328,16 @@
     });
   }
 
-  /** Result === source (or empty) → keep the source; anything else is painted. */
+  /** Missing row → one re-request (ablation: +140 blocks on partial responses); still missing → keep the source.
+   *  A result identical to the source is simply painted (a no-op), so no echo check is needed. */
   function accept(u, dst) {
-    const norm = (t) => stripTags(t).replace(/\s+/g, "").toLowerCase();
-    if (!dst || norm(dst) === norm(u.src)) return settle(u, "skip");
-    remember(cacheKey(u.src), dst);
+    if (!dst && !u.retried && !off("missretry")) {
+      u.retried = true;
+      queue.unshift(u);
+      return;
+    }
+    if (!dst) return settle(u, "skip");
+    if (!off("cache")) remember(cacheKey(u.src), dst);
     paint(u, dst);
   }
 
@@ -310,7 +387,7 @@
     }
     let p = 0;
     let buf = "";
-    const flush = () => {
+    const flushSlot = () => {
       const nodes = slots[p] || [];
       if (nodes.length) nodes.forEach((n, i) => (n.data = i ? "" : buf));
       else if (buf.trim()) u.created.push(E.insertBefore(document.createTextNode(buf), anchors[p] || null));
@@ -322,31 +399,29 @@
         buf += part;
         continue;
       }
-      flush();
+      flushSlot();
       const m = u.map[part.id - 1];
       if (!m) buf += flatten(part.parts);
       else if (!m.keep) write(u, m.el, part.parts);
     }
-    flush();
+    flushSlot();
     for (let q = p; q < slots.length; q++) slots[q].forEach((n) => (n.data = ""));
   }
 
   function paint(u, dst) {
+    // result for a unit the page already rewrote or removed: painting it would overwrite the page's newer text (stale paint)
+    if (!off("deadguard") && (u.dead || !u.el.isConnected)) return;
     const { parts, seen } = parse(dst);
     const nodes = [];
     const w = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) nodes.push(n);
+    // tags did not round-trip: keep the source — a plain-text fallback emptied 38 % of Wikipedia's link labels
+    if (!u.map.every((m, i) => m.keep || seen.has(i + 1))) return settle(u, "skip");
     u.snap = nodes.map((n) => [n, n.data]);
     u.created = [];
-    if (u.map.every((m, i) => m.keep || seen.has(i + 1))) write(u, u.el, parts);
-    else {
-      // tags did not round-trip: plain translation into the longest text node, blank the rest (structure kept)
-      const live = nodes.filter((n) => n.data.trim() && !n.parentElement?.closest(`${KEEP},${SKIP}`));
-      const main = live.reduce((a, n) => (n.data.trim().length > (a?.data.trim().length || 0) ? n : a), null);
-      live.forEach((n) => (n.data = n === main ? stripTags(dst) : ""));
-    }
+    write(u, u.el, parts);
     u.el.dataset.pbtState = "ok";
-    mo?.takeRecords();
+    if (!off("selfignore")) mo?.takeRecords();
   }
 
   function resetHost(el) {
@@ -370,7 +445,7 @@
       observe();
       renderFab();
     }
-    translateNew([document.body]);
+    await collect(document.body);
     while (workers) await sleep(250);
     return { ok: true, translated: active, count: okCount() };
   }
@@ -378,6 +453,7 @@
   function restore() {
     runId += 1;
     active = false;
+    failed.clear();
     queue = [];
     workers = 0;
     mo?.disconnect();
@@ -396,30 +472,31 @@
     return on ? start() : restore();
   }
 
-  function translateNew(roots) {
-    const units = [];
-    for (const r of roots) if (r?.isConnected && !r.closest(`${SKIP},${KEEP}`)) collect(r, units);
-    mo?.takeRecords();
-    if (units.length) enqueue(units);
+  async function translateNew(roots) {
+    for (const r of roots) if (r?.isConnected && !r.closest(`${SKIP},${KEEP}`)) await collect(r);
   }
 
-  /** Page mutations only; our own writes are drained with takeRecords() right after each paint. */
+  /** A page mutation under one of our hosts: give the host back to the page and re-collect from its parent. */
+  function markDirty(t) {
+    const host = t.closest("[data-pbt-state]");
+    if (!host) return dirty.add(t);
+    const parent = host.parentElement;
+    const n = (thrash.get(host) || 0) + 1;
+    thrash.set(host, n);
+    resetHost(host);
+    // page keeps rewriting this node (ticker / typewriter): stop chasing it — settle +25 s on omarchy without this
+    if (n > 3 && !off("thrash")) host.dataset.pbtState = "skip";
+    dirty.add(parent || t);
+  }
+
+  /** Page mutations only (+753 leftovers without the observer); our own writes are drained with takeRecords()
+   *  right after each paint (853 repaints and half-painted blocks without that). */
   function observe() {
-    if (mo) return;
+    if (mo || off("observer")) return;
     mo = new MutationObserver((records) => {
       for (const r of records) {
         const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
-        if (!t) continue;
-        const host = t.closest("[data-pbt-state]");
-        if (host) {
-          const parent = host.parentElement;
-          const n = (thrash.get(host) || 0) + 1;
-          thrash.set(host, n);
-          resetHost(host);
-          // page keeps rewriting this node (ticker / typewriter): stop chasing it
-          if (n > 3) host.dataset.pbtState = "skip";
-          dirty.add(parent || t);
-        } else dirty.add(t);
+        if (t) markDirty(t);
       }
       // fixed window, not a trailing debounce: pages that mutate continuously must still flush
       if (!moTimer) {
@@ -518,18 +595,21 @@
     return true;
   });
 
-  chrome.storage.onChanged.addListener((chg, area) => {
-    if (area !== "local") return;
+  /** Settings changed elsewhere (options page, popup): apply, then start/stop/restart as needed. */
+  function onSettingsChanged(chg) {
     if (chg[PBT.PN_STORE_KEY]) nouns = PBT.pnTermList(PBT.pnEnsureStore(chg[PBT.PN_STORE_KEY].newValue));
     for (const k of Object.keys(chg)) if (k in PBT.DEFAULTS) settings[k] = chg[k].newValue;
-    if (chg.serviceOn) {
-      if (settings.serviceOn && !active) start();
-      else if (!settings.serviceOn && active) restore();
-    } else if (active && (chg.targetLang || chg.engine || chg.excludeCss)) {
-      restore();
-      start();
-    }
-  });
+    const want = "serviceOn" in chg ? !!settings.serviceOn : active;
+    const restart = active && ["targetLang", "engine", "excludeCss"].some((k) => k in chg);
+    syncRun(want, restart);
+  }
+
+  function syncRun(want, restart) {
+    if (restart || (active && !want)) restore();
+    if (restart || (want && !active)) start();
+  }
+
+  chrome.storage.onChanged.addListener((chg, area) => area === "local" && onSettingsChanged(chg));
 
   addEventListener("pagehide", persistCache);
 
@@ -538,7 +618,9 @@
     nouns = PBT.pnTermList(await PBT.pnLoad());
     await loadCache();
     mountUi();
-    // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches
-    if (settings.serviceOn) document.readyState === "complete" ? start() : addEventListener("load", () => start());
+    // after load: SSR frameworks have hydrated, so our text swaps don't trip hydration mismatches (repaints +4 without it)
+    if (!settings.serviceOn) return;
+    if (off("loadgate") || document.readyState === "complete") start();
+    else addEventListener("load", () => start());
   });
 })();
