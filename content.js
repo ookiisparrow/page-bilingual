@@ -102,16 +102,24 @@
     return !re || letters.filter((c) => re.test(c)).length / letters.length < 0.5;
   }
 
-  /** `bin` → /tree/quattro/bin, `ryanrhughes` → /ryanrhughes: the label is the last path segment of its own link.
-   *  `edit` → ?action=edit and an href-less `hide` button are UI words and get translated. */
+  /** A lowercase/ALL-CAPS label is an identifier when it names its own link target — last path segment (`bin` →
+   *  /tree/quattro/bin) or last query value (`ryanrhughes` → ?author=ryanrhughes) — or, for an href-less control, a path
+   *  segment of any link on the page (branch button `quattro` → /tree/quattro/…). Wikipedia's `[edit]`
+   *  (…&action=edit&section=1 → last value "1") and the `hide` button (no /hide/ path) stay UI words and translate. */
   function isPathLabel(el, t) {
     if (!HANDLE.test(t)) return false;
-    const a = el.matches("a[href]") ? el : el.querySelector("a[href]");
-    try {
-      return !!a && decodeURIComponent(new URL(a.href).pathname).split("/").filter(Boolean).pop()?.toLowerCase() === t.toLowerCase();
-    } catch {
-      return false;
-    }
+    const own = el.matches("a[href]") ? el : el.querySelector("a[href]");
+    const key = t.toLowerCase();
+    const names = (a) => {
+      try {
+        const u = new URL(a.href);
+        const segs = decodeURIComponent(u.pathname).split("/").filter(Boolean);
+        return own ? [segs.pop(), [...u.searchParams.values()].pop()] : segs;
+      } catch {
+        return [];
+      }
+    };
+    return (own ? [own] : [...document.links]).some((a) => names(a).some((s) => s?.toLowerCase() === key));
   }
 
   // ponytail: orphan text next to block siblings gets a span wrapper (unwrapped on restore). Ablation: +63 leftovers without it.
@@ -407,15 +415,11 @@
     const nodes = [];
     const w = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) nodes.push(n);
+    // tags did not round-trip: keep the source — a plain-text fallback emptied 38 % of Wikipedia's link labels
+    if (!u.map.every((m, i) => m.keep || seen.has(i + 1))) return settle(u, "skip");
     u.snap = nodes.map((n) => [n, n.data]);
     u.created = [];
-    if (u.map.every((m, i) => m.keep || seen.has(i + 1))) write(u, u.el, parts);
-    else {
-      // tags did not round-trip: plain translation into the longest text node, blank the rest (structure kept)
-      const live = nodes.filter((n) => n.data.trim() && !n.parentElement?.closest(`${KEEP},${SKIP}`));
-      const main = live.reduce((a, n) => (n.data.trim().length > (a?.data.trim().length || 0) ? n : a), null);
-      live.forEach((n) => (n.data = n === main ? stripTags(dst) : ""));
-    }
+    write(u, u.el, parts);
     u.el.dataset.pbtState = "ok";
     if (!off("selfignore")) mo?.takeRecords();
   }
