@@ -16,9 +16,9 @@
   );
   const INLINE_TAGS = new Set("EM STRONG B I U S SMALL MARK ABBR SUP SUB Q CITE DEL INS BR WBR IMG PICTURE SVG CODE KBD SAMP VAR TIME".split(" "));
   const TARGET_SCRIPT = { zh: /[\u4e00-\u9fff]/, ja: /[\u3040-\u30ff]/, ko: /[\uac00-\ud7af]/, en: /[A-Za-z]/ };
-  // URLs, emails, identifiers and paths: one token that is dotted / digit- or underscore-bearing
-  // (README.md, v1), or two tokens joined by a slash (omacom / omarchy, CI/CD).
-  const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|\S+\s*\/\s*\S+)$/i;
+  // URLs, emails, identifiers and paths: one token that is dotted / digit- or underscore-bearing (README.md, v1),
+  // or two same-case tokens joined by a slash (omacom / omarchy, agents/skills, CI/CD — but not the UI label Print/export).
+  const NOISE = /^(?:https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|\S*[\d_.]\S*|\/\S+|[a-z][\w.-]*\s*\/\s*[a-z][\w.-]*|[A-Z][A-Z-]*\/[A-Z][A-Z-]*)$/;
   // One all-lowercase or ALL-CAPS token; only an identifier when it names its own link target (see isPathLabel).
   const HANDLE = /^(?:[a-z][a-z-]*|[A-Z][A-Z-]+)$/;
   const CACHE_KEY = "pbt.segCache.v2";
