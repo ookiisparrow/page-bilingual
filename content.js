@@ -227,7 +227,12 @@
       const d = new Map(queue.map((u) => [u, distance(u.el)]));
       queue.sort((a, b) => d.get(a) - d.get(b));
     }
-    kick();
+    scheduleKick();
+  }
+
+  function scheduleKick() {
+    clearTimeout(kickTimer);
+    kickTimer = setTimeout(kick, 120);
   }
 
   function kick() {
@@ -377,6 +382,7 @@
     if (!dst && !u.retried && !off("missretry")) {
       u.retried = true;
       queue.unshift(u);
+      scheduleKick();
       return;
     }
     if (!dst) return settle(u, "skip");
@@ -386,6 +392,7 @@
 
   function settle(u, state) {
     u.el.dataset.pbtState = state;
+    io?.unobserve(u.el);
   }
 
   /* ---------- paint ---------- */
@@ -464,6 +471,7 @@
     u.created = [];
     write(u, u.el, parts);
     u.el.dataset.pbtState = "ok";
+    io?.unobserve(u.el);
     if (!off("selfignore")) mo?.takeRecords();
   }
 
@@ -507,6 +515,8 @@
     io = null;
     clearTimeout(moTimer);
     moTimer = 0;
+    clearTimeout(kickTimer);
+    kickTimer = 0;
     dirty.clear();
     for (const el of [...unitOf.keys()]) resetHost(el);
     renderFab();
@@ -567,9 +577,7 @@
         const u = unitOf.get(e.target);
         if (u) u.near = e.isIntersecting;
       }
-      // let one scroll step's blocks arrive before batching, so a step costs one request instead of several
-      clearTimeout(kickTimer);
-      kickTimer = setTimeout(kick, 120);
+      scheduleKick();
     }, NEAR);
   }
 
