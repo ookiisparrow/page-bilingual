@@ -58,12 +58,14 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const frame = () => new Promise((r) => requestAnimationFrame(r));
-  const stripTags = (s) => String(s || "").replace(/<\/?b\d+>/g, "");
+  const stripTags = (s) => String(s || "").replace(/§\/?\d+§/g, "").replace(/<\/?b\d+>/g, "");
+  const phOpen = (id) => `§${id}§`;
+  const phClose = (id) => `§/${id}§`;
   const hasLetters = (n) => /\p{L}/u.test(n.textContent || "");
   const isCursor = () => /^(cursor|bridge)$/i.test(settings.engine || "");
   const engineId = () => (isCursor() ? `cursor:${settings.cursorModel}` : `deepseek:${settings.deepseekModel}`);
   const cacheKey = (src) => `${settings.targetLang}|${cheapFor(src) ? "translator" : engineId()}|${src}`;
-  const cheapFor = (src) => !off("cheap") && !!translator && src.length <= CHEAP_MAX && !/<b\d+>/.test(src) && /^[\x20-\x7E\u00C0-\u024F]+$/.test(src);
+  const cheapFor = (src) => !off("cheap") && !!translator && src.length <= CHEAP_MAX && !/§\/?\d+§/.test(src) && !/<b\d+>/.test(src) && /^[\x20-\x7E\u00C0-\u024F§]+$/.test(src);
   const okCount = () => [...unitOf.values()].filter((u) => u.el.dataset.pbtState === "ok").length;
 
   function safeMatches(el, sel) {
@@ -83,7 +85,7 @@
     return !getComputedStyle(n).display.startsWith("inline");
   }
 
-  /** Host text with inline descendants as <bN>…</bN> so the model can keep links/emphasis in place (links lose their words without it). */
+  /** Host text with inline descendants as §N§…§/N§ placeholders; model only translates words, paint remaps locally. */
   function serialize(host) {
     const map = [];
     let plain = "";
@@ -96,13 +98,13 @@
         } else if (n.nodeType === 1 && !n.matches(SKIP) && /\p{L}|\p{N}/u.test(n.textContent)) {
           const k = keep || n.matches(KEEP);
           const id = map.push({ el: n, keep: k });
-          s += `<b${id}>${walk(n, k)}</b${id}>`;
+          s += phOpen(id) + walk(n, k) + phClose(id);
         }
       }
       return s;
     };
-    const tagged = walk(host, false).replace(/\s+/g, " ").trim();
-    return { el: host, src: off("tags") ? stripTags(tagged) : tagged, map, plain: plain.trim() };
+    const marked = walk(host, false).replace(/\s+/g, " ").trim();
+    return { el: host, src: off("tags") ? stripTags(marked) : marked, map, plain: plain.trim() };
   }
 
   function needsTranslate(u) {
@@ -374,7 +376,9 @@
     if (!cheap.length) return items;
     try {
       const tr = await translator;
-      applyRows(cheap, await Promise.all(cheap.map(async (it) => ({ id: it.id, text: await tr.translate(it.text) }))), my);
+      const rows = await Promise.all(cheap.map(async (it) => ({ id: it.id, text: await tr.translate(it.text) })));
+      if (rows.some((r) => !r.text)) return items;
+      applyRows(cheap, rows, my);
       return items.filter((it) => !cheap.includes(it));
     } catch {
       return items;
@@ -453,7 +457,7 @@
     const root = { parts: [] };
     const stack = [root];
     const seen = new Set();
-    const re = /<(\/?)b(\d+)>/g;
+    const re = /§(\/?)(\d+)§/g;
     let last = 0;
     let m;
     while ((m = re.exec(s))) {
@@ -471,6 +475,38 @@
     }
     if (last < s.length) stack[stack.length - 1].parts.push(s.slice(last));
     return { parts: root.parts, seen };
+  }
+
+  /** When the model drops all § markers, split translated plain text across text-node slots by source length ratios. */
+  function alignPlain(u, dst) {
+    const clean = String(dst || "").replace(/§\/?\d+§/g, "").trim();
+    if (!clean) return null;
+    const slots = [];
+    const tagged = new Set(u.map.map((m) => m.el));
+    const walk = (el) => {
+      for (const n of el.childNodes) {
+        if (n.nodeType === 3) slots.push({ len: n.data.length });
+        else if (tagged.has(n)) slots.push({ inline: u.map.findIndex((m) => m.el === n) + 1 });
+        else if (n.nodeType === 1 && !n.matches(SKIP)) walk(n);
+      }
+    };
+    walk(u.el);
+    const textIdx = slots.map((s, i) => (s.len != null ? i : -1)).filter((i) => i >= 0);
+    const total = textIdx.reduce((a, i) => a + slots[i].len, 0) || 1;
+    let pos = 0;
+    const texts = textIdx.map((i, j) => {
+      const end = j === textIdx.length - 1 ? clean.length : pos + Math.round((slots[i].len / total) * clean.length);
+      const t = clean.slice(pos, end);
+      pos = end;
+      return t;
+    });
+    const parts = [];
+    let ti = 0;
+    for (const s of slots) {
+      if (s.len != null) parts.push(texts[ti++] || "");
+      else parts.push({ id: s.inline, parts: [] });
+    }
+    return parts;
   }
 
   const flatten = (parts) => parts.map((p) => (typeof p === "string" ? p : flatten(p.parts))).join("");
@@ -504,7 +540,11 @@
       flushSlot();
       const m = u.map[part.id - 1];
       if (!m) buf += flatten(part.parts);
-      else if (!m.keep) write(u, m.el, part.parts);
+      else if (m.keep) {
+        /* verbatim inline — leave DOM unchanged */
+      } else if (u.fallback?.has(part.id)) {
+        /* placeholder dropped — keep this inline in English */
+      } else write(u, m.el, part.parts);
     }
     flushSlot();
     for (let q = p; q < slots.length; q++) slots[q].forEach((n) => (n.data = ""));
@@ -513,12 +553,20 @@
   function paint(u, dst) {
     // result for a unit the page already rewrote or removed: painting it would overwrite the page's newer text (stale paint)
     if (!off("deadguard") && (u.dead || !u.el.isConnected)) return;
-    const { parts, seen } = parse(dst);
+    let { parts, seen } = parse(dst);
+    u.fallback = new Set();
+    for (let i = 0; i < u.map.length; i++) {
+      const m = u.map[i];
+      if (!m.keep && !seen.has(i + 1)) u.fallback.add(i + 1);
+    }
+    const trans = u.map.filter((m) => !m.keep);
+    if (trans.length && u.fallback.size === trans.length) {
+      const aligned = alignPlain(u, dst);
+      if (aligned) parts = aligned;
+    }
     const nodes = [];
     const w = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT);
     for (let n = w.nextNode(); n; n = w.nextNode()) nodes.push(n);
-    // tags did not round-trip: keep the source — a plain-text fallback emptied 38 % of Wikipedia's link labels
-    if (!u.map.every((m, i) => m.keep || seen.has(i + 1))) return settle(u, "skip");
     u.snap = nodes.map((n) => [n, n.data]);
     u.created = [];
     write(u, u.el, parts);
