@@ -25,9 +25,10 @@
   const CACHE_CAP = 2000;
   const CACHE_PERSIST_MAX = 200;
   const CHEAP_MAX = 40; // tag-free Latin strings up to this length go to the on-device Translator when available
-  const NEAR = { rootMargin: "50% 0px 75% 0px" }; // viewport + half screen above + ¾ screen below (scroll-down prefetch)
-  const NEAR_ABOVE = 0.5; // refreshNear: viewport + this × innerHeight above
-  const NEAR_BELOW = 0.75; // refreshNear: viewport + this × innerHeight below
+  const NEAR = { rootMargin: "60% 0px 150% 0px" }; // viewport + 0.6 screen above + 1.5 screens below (IO discovery)
+  const NEAR_ABOVE = 0.6; // refreshNear base: viewport + this × innerHeight above
+  const NEAR_BELOW = 1.5; // refreshNear base: viewport + this × innerHeight below (~2 screens ahead)
+  const SCROLL_BOOST = 1; // while scrolling: +1 screen in the active direction (fast skim)
   const KICK_MS = 60; // debounced kick for IO/mutation; scroll uses kickNow via rAF
   const MAX_CHARS = 3600;
   const MAX_HOST_CHARS = 4000;
@@ -52,6 +53,8 @@
   let moTimer = 0;
   let kickTimer = 0;
   let scrollRaf = 0;
+  let lastScrollY = 0;
+  let scrollDir = 0; // 1 = down, −1 = up; boosts prefetch band in scroll direction
   let persistTimer = 0;
   let collecting = Promise.resolve(); // collects run one at a time so a subtree is never wrapped twice
   const ui = {};
@@ -259,12 +262,20 @@
     }, KICK_MS);
   }
 
+  /** Prefetch band around the viewport; widens in the scroll direction so fast skim sees Chinese already painted. */
+  function nearBand() {
+    const boost = scrollDir > 0 ? SCROLL_BOOST : scrollDir < 0 ? SCROLL_BOOST : 0;
+    const above = innerHeight * (NEAR_ABOVE + (scrollDir < 0 ? boost : 0));
+    let below = innerHeight * (NEAR_BELOW + (scrollDir > 0 ? boost : scrollDir < 0 ? -NEAR_BELOW * 0.35 : 0));
+    below = Math.max(innerHeight * 0.75, below); // scrolling up still keeps a modest lead below
+    return { above, below };
+  }
+
   /** Sync `near` from layout; IO alone misses blocks skipped by instant scrollTo. Clears stale near so offscreen
    *  batches do not compete with the current viewport after scroll. */
   function refreshNear() {
     if (off("gate") || !queue.length) return;
-    const above = innerHeight * NEAR_ABOVE;
-    const below = innerHeight * NEAR_BELOW;
+    const { above, below } = nearBand();
     for (const u of queue) {
       if (u.dead) continue;
       const r = u.el.getBoundingClientRect();
@@ -281,6 +292,10 @@
   }
 
   function onScrollOrResize() {
+    const y = scrollY;
+    if (y > lastScrollY + 6) scrollDir = 1;
+    else if (y < lastScrollY - 6) scrollDir = -1;
+    lastScrollY = y;
     if (scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => {
       scrollRaf = 0;
@@ -577,6 +592,8 @@
     kickTimer = 0;
     if (scrollRaf) cancelAnimationFrame(scrollRaf);
     scrollRaf = 0;
+    lastScrollY = 0;
+    scrollDir = 0;
     dirty.clear();
     for (const el of [...unitOf.keys()]) resetHost(el);
     renderFab();
