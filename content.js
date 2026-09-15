@@ -33,6 +33,7 @@
   const dirty = new Set(); // mutation roots awaiting re-collect
   const thrash = new WeakMap(); // host → times the page rewrote it after we painted
   const inflight = new Set(); // source texts currently being requested
+  const failed = new Set(); // source texts whose request failed in this run
   let settings = { ...PBT.DEFAULTS };
   let nouns = [];
   let active = false;
@@ -254,6 +255,8 @@
     for (const us of groups.values()) {
       const hit = !off("cache") && cache.get(cacheKey(us[0].src));
       if (hit) us.forEach((u) => paint(u, hit));
+      // a text that already failed this run is not requested again by its other copies (bounds an outage to 2 calls per text)
+      else if (failed.has(us[0].src) && !off("failmemo")) us.forEach((u) => settle(u, "fail"));
       else items.push({ id: String(items.length), text: us[0].src, us });
     }
     return items;
@@ -270,7 +273,10 @@
       for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
     } catch (e) {
       if (my !== runId) return;
-      for (const it of items) for (const u of it.us) settle(u, "fail");
+      for (const it of items) {
+        failed.add(it.text);
+        for (const u of it.us) settle(u, "fail");
+      }
       toast(String(e.message || e));
     } finally {
       items.forEach((it) => inflight.delete(it.text));
@@ -437,6 +443,7 @@
     runId += 1;
     active = false;
     painted = false;
+    failed.clear();
     queue = [];
     workers = 0;
     mo?.disconnect();
