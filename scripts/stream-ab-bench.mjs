@@ -45,7 +45,6 @@ function launchChrome(extPath, port) {
     CFT,
     [
       `--user-data-dir=${profile}`,
-      `--disable-extensions-except=${extPath}`,
       `--load-extension=${extPath}`,
       `--remote-debugging-port=${port}`,
       "--no-first-run",
@@ -106,8 +105,12 @@ function metrics(page) {
 
 async function prepExtension(browser, key) {
   const ctx = browser.contexts()[0];
-  await new Promise((r) => setTimeout(r, 2000));
-  const sw = ctx.serviceWorkers().find((s) => s.url().includes("/background.js") && !s.url().includes("glbjnfimc"));
+  let sw = null;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    sw = ctx.serviceWorkers().find((s) => s.url().includes("/background.js") && !s.url().includes("glbjnfimc"));
+    if (sw) break;
+  }
   if (!sw) throw new Error("extension service worker missing");
   await sw.evaluate(
     async ([apiKey]) => {

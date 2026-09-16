@@ -11,10 +11,9 @@ cp -r manifest.json shared.js options.html options.js popup.html popup.js icons 
 if [ "$VARIANT" = "baseline" ]; then
   git show "${BASE_REF}:content.js" > "$DEST/content.js"
   git show "${BASE_REF}:background.js" > "$DEST/background.js"
-  sed -i 's/"version": "1.4.62"/"version": "1.4.62-baseline"/' "$DEST/manifest.json"
+  sed -i 's/"version": "1.4.63"/"version": "1.4.62"/' "$DEST/manifest.json"
 else
   cp content.js background.js "$DEST/"
-  sed -i 's/"version": "1.4.63"/"version": "1.4.63-stream"/' "$DEST/manifest.json"
 fi
 [ -f local-key.js ] && cp local-key.js "$DEST/" || true
 if [ -n "${DEEPSEEK_API_KEY:-}" ] && [ ! -f "$DEST/local-key.js" ]; then
