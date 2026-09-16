@@ -221,6 +221,7 @@ async function translateHttp(s, items, page, cfg) {
 }
 
 async function translateBatch(items, targetLang, page, properNouns) {
+  globalThis.__pbtBgCalls = (globalThis.__pbtBgCalls || 0) + 1;
   if (!items.length) return [];
   const s = await PBT.loadAll();
   if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string") s.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;

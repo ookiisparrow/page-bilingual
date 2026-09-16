@@ -24,7 +24,9 @@
   const CACHE_KEY = "pbt.segCache.v3"; // [key, text, hits][] — only sources ≤ CACHE_PERSIST_MAX chars are persisted
   const CACHE_CAP = 2000;
   const CACHE_PERSIST_MAX = 200;
-  const CHEAP_MAX = 40; // tag-free Latin strings up to this length go to the on-device Translator when available
+  const CHEAP_MAX = 80; // short Latin (nav, buttons, labels) → on-device Translator when available
+  const VIEWPORT_BATCH = 64; // in-viewport batches: fewer round-trips without blocking parallel workers
+  const VIEWPORT_MAX_CHARS = 10000;
   const NEAR = { rootMargin: "50% 0px 75% 0px" }; // viewport + half screen above + ¾ screen below (scroll-down prefetch)
   const NEAR_ABOVE = 0.5; // refreshNear: viewport + this × innerHeight above
   const NEAR_BELOW = 0.75; // refreshNear: viewport + this × innerHeight below
@@ -40,6 +42,7 @@
   const thrash = new WeakMap(); // host → times the page rewrote it after we painted
   const inflight = new Set(); // source texts currently being requested
   const failed = new Map(); // source text → failed requests this run
+  let engineCalls = 0;
   let settings = { ...PBT.DEFAULTS };
   let nouns = [];
   let active = false;
@@ -65,7 +68,13 @@
   const isCursor = () => /^(cursor|bridge)$/i.test(settings.engine || "");
   const engineId = () => (isCursor() ? `cursor:${settings.cursorModel}` : `deepseek:${settings.deepseekModel}`);
   const cacheKey = (src) => `${settings.targetLang}|${cheapFor(src) ? "translator" : engineId()}|${src}`;
-  const cheapFor = (src) => !off("cheap") && !!translator && src.length <= CHEAP_MAX && !/§\/?\d+§/.test(src) && !/<b\d+>/.test(src) && /^[\x20-\x7E\u00C0-\u024F§]+$/.test(src);
+  const cheapPlain = (src) => stripTags(src).replace(/\s+/g, " ").trim();
+  const cheapFor = (src) =>
+    !off("cheap") &&
+    !!translator &&
+    cheapPlain(src).length >= 2 &&
+    cheapPlain(src).length <= CHEAP_MAX &&
+    /^[\x20-\x7E\u00C0-\u024F§/]+$/.test(src);
   const okCount = () => [...unitOf.values()].filter((u) => u.el.dataset.pbtState === "ok").length;
 
   function safeMatches(el, sel) {
@@ -296,10 +305,12 @@
     const size = off("batch") ? 1 : isCursor() ? 6 : 20;
     let chars = 0;
     const take = (onlyView) => {
-      for (let i = 0; i < queue.length && batch.length < size; ) {
+      const cap = onlyView && !off("vpbatch") ? VIEWPORT_BATCH : size;
+      const maxChars = onlyView && !off("vpbatch") ? VIEWPORT_MAX_CHARS : MAX_CHARS;
+      for (let i = 0; i < queue.length && batch.length < cap; ) {
         const u = queue[i];
         if (u.dead) queue.splice(i, 1);
-        else if (!u.near || inflight.has(u.src) || (onlyView && !inViewport(u.el)) || (batch.length && chars + u.src.length > MAX_CHARS))
+        else if (!u.near || inflight.has(u.src) || (onlyView && !inViewport(u.el)) || (batch.length && chars + u.src.length > maxChars))
           i += 1;
         else {
           queue.splice(i, 1);
@@ -369,14 +380,25 @@
     for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
   }
 
-  /** Short tag-free Latin strings (nav, buttons, labels) → on-device Translator (~50 ms, free); returns what still
-   *  needs the engine. Any Translator failure sends the whole cheap group to the engine — one fallback, no ladder. */
+  /** Short Latin strings (nav, buttons, labels) → on-device Translator (~50 ms, free); § placeholders preserved.
+   *  Returns what still needs the engine. Any Translator failure sends the whole cheap group to the engine. */
+  async function cheapTranslate(tr, text) {
+    if (!/§\/?\d+§/.test(text)) return tr.translate(text);
+    const parts = text.split(/(§\/?\d+§)/);
+    let out = "";
+    for (const p of parts) {
+      if (!p) continue;
+      out += /^§\/?\d+§$/.test(p) ? p : await tr.translate(p);
+    }
+    return out;
+  }
+
   async function cheapFirst(items, my) {
     const cheap = items.filter((it) => cheapFor(it.text));
     if (!cheap.length) return items;
     try {
       const tr = await translator;
-      const rows = await Promise.all(cheap.map(async (it) => ({ id: it.id, text: await tr.translate(it.text) })));
+      const rows = await Promise.all(cheap.map(async (it) => ({ id: it.id, text: await cheapTranslate(tr, it.text) })));
       if (rows.some((r) => !r.text)) return items;
       applyRows(cheap, rows, my);
       return items.filter((it) => !cheap.includes(it));
@@ -404,6 +426,8 @@
   }
 
   async function request(items) {
+    engineCalls += 1;
+    globalThis.__pbtEngineCalls = engineCalls;
     const blob = items.map((i) => i.text).join("\n").toLowerCase();
     const msg = {
       type: "PBT_BATCH",
@@ -594,15 +618,17 @@
     if (!active) {
       active = true;
       runId += 1;
+      engineCalls = 0;
+      globalThis.__pbtEngineCalls = 0;
       observe();
       gate();
       mountUi();
       renderFab();
     }
-    const collecting = collect(document.body);
+    const job = collect(document.body);
     await frame();
     kickNow();
-    await collecting;
+    await job;
     while (workers) await sleep(250);
     return { ok: true, translated: active, count: okCount() };
   }
@@ -613,6 +639,7 @@
     failed.clear();
     queue = [];
     workers = 0;
+    engineCalls = 0;
     mo?.disconnect();
     mo = null;
     io?.disconnect();
