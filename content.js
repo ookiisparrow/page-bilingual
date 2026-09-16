@@ -66,7 +66,9 @@
   const phClose = (id) => `§/${id}§`;
   const hasLetters = (n) => /\p{L}/u.test(n.textContent || "");
   const isCursor = () => /^(cursor|bridge)$/i.test(settings.engine || "");
-  const engineId = () => (isCursor() ? `cursor:${settings.cursorModel}` : `deepseek:${settings.deepseekModel}`);
+  const isDeepL = () => /^deepl$/i.test(settings.engine || "");
+  const engineId = () =>
+    isCursor() ? `cursor:${settings.cursorModel}` : isDeepL() ? "deepl" : `deepseek:${settings.deepseekModel}`;
   const cacheKey = (src) => `${settings.targetLang}|${cheapFor(src) ? "translator" : engineId()}|${src}`;
   const cheapPlain = (src) => stripTags(src).replace(/\s+/g, " ").trim();
   const cheapFor = (src) =>
