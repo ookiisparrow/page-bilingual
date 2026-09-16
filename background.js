@@ -18,13 +18,14 @@ chrome.storage.onChanged.addListener((chg, area) => {
 chrome.storage.local.get(["serviceOn"], (s) => syncServiceBadge(!!s.serviceOn));
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get(["serviceOn", "engine", "deepseekModel", "deepseekApiKey"], (s) => {
+  chrome.storage.local.get(["serviceOn", "engine", "deepseekModel", "deepseekApiKey", "deeplApiKey"], (s) => {
     syncServiceBadge(!!s.serviceOn);
     const patch = {};
-    // Keep cursor / bridge; only coerce unset / legacy glm / auto → deepseek
+    // Keep cursor / bridge / deepl; only coerce unset / legacy glm / auto → deepseek
     if (!s.engine || s.engine === "glm" || s.engine === "auto") patch.engine = "deepseek";
     if (!s.deepseekModel || s.deepseekModel === "deepseek-chat") patch.deepseekModel = "deepseek-flash";
     if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string" && PBT_LOCAL_DEEPSEEK_KEY) patch.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;
+    if (!s.deeplApiKey && typeof PBT_LOCAL_DEEPL_KEY === "string" && PBT_LOCAL_DEEPL_KEY) patch.deeplApiKey = PBT_LOCAL_DEEPL_KEY;
     if (Object.keys(patch).length) chrome.storage.local.set(patch);
   });
   chrome.contextMenus.removeAll(() => {
@@ -56,6 +57,7 @@ function send(tabId, payload) {
 }
 
 const isCursorEngine = (engine) => /^(bridge|cursor)$/i.test(String(engine || ""));
+const isDeepLEngine = (engine) => /^deepl$/i.test(String(engine || ""));
 
 async function readErrorLog() {
   const data = await chrome.storage.local.get([PBT.ERROR_LOG_KEY]);
@@ -91,7 +93,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     PBT_HAS_KEY: async () => {
       const s = await PBT.loadAll();
       const cursor = isCursorEngine(s.engine);
-      return { ok: true, hasKey: cursor || Boolean(s.deepseekApiKey), engine: cursor ? "cursor" : "deepseek" };
+      const deepl = isDeepLEngine(s.engine);
+      const engine = cursor ? "cursor" : deepl ? "deepl" : "deepseek";
+      const hasKey = cursor || (deepl ? Boolean(s.deeplApiKey) : Boolean(s.deepseekApiKey));
+      return { ok: true, hasKey, engine };
     },
     PBT_GET_ERROR_LOG: async () => ({ ok: true, entries: await readErrorLog() }),
     PBT_CLEAR_ERROR_LOG: async () => {
@@ -220,17 +225,88 @@ async function translateHttp(s, items, page, cfg) {
   }
 }
 
+function deeplTargetLang(targetLang) {
+  const t = String(targetLang || "zh-CN").toUpperCase();
+  if (/^ZH(-TW|_TW|HANT)/.test(t)) return "ZH-HANT";
+  if (/^ZH/.test(t)) return "ZH";
+  return t.slice(0, 2);
+}
+
+/** Plaintext DeepL translate; § placeholders preserved, no layout HTML. */
+async function translateDeepL(s, items) {
+  const apiKey = String(s.deeplApiKey || "").trim();
+  if (!apiKey) throw new Error("未填写 DeepL API Key，请到选项页设置。");
+  const body = { text: items.map((x) => String(x.text ?? "")), target_lang: deeplTargetLang(s.targetLang) };
+  const bases = apiKey.endsWith(":fx")
+    ? ["https://api-free.deepl.com/v2/translate", "https://api.deepl.com/v2/translate"]
+    : ["https://api.deepl.com/v2/translate", "https://api-free.deepl.com/v2/translate"];
+  let lastErr;
+  for (const url of bases) {
+    try {
+      const { res, data } = await fetchJson(
+        url,
+        { method: "POST", headers: { "Content-Type": "application/json", Authorization: `DeepL-Auth-Key ${apiKey}` }, body: JSON.stringify(body) },
+        28000
+      );
+      if (!res.ok) {
+        const msg = data.message || data.error || `DeepL HTTP ${res.status}`;
+        lastErr = Object.assign(new Error(msg), { status: res.status });
+        if (res.status === 403) continue;
+        throw lastErr;
+      }
+      const rows = data.translations || [];
+      return items.map((x, i) => ({ id: x.id, text: String(rows[i]?.text ?? "") }));
+    } catch (err) {
+      lastErr = err;
+      if (err.status === 403) continue;
+      throw err;
+    }
+  }
+  throw lastErr || new Error("DeepL 请求失败");
+}
+
+/** One retry after a short backoff for DeepL. */
+async function translateDeepLHttp(s, items) {
+  try {
+    return await translateDeepL(s, items);
+  } catch (err) {
+    if (ABLATE.has("retry")) throw err;
+    await new Promise((r) => setTimeout(r, 600));
+    return translateDeepL(s, items);
+  }
+}
+
 async function translateBatch(items, targetLang, page, properNouns) {
   globalThis.__pbtBgCalls = (globalThis.__pbtBgCalls || 0) + 1;
   if (!items.length) return [];
   const s = await PBT.loadAll();
   if (!s.deepseekApiKey && typeof PBT_LOCAL_DEEPSEEK_KEY === "string") s.deepseekApiKey = PBT_LOCAL_DEEPSEEK_KEY;
+  if (!s.deeplApiKey && typeof PBT_LOCAL_DEEPL_KEY === "string") s.deeplApiKey = PBT_LOCAL_DEEPL_KEY;
   s.targetLang = targetLang || s.targetLang;
   s.properNouns = Array.isArray(properNouns) ? properNouns : [];
-  activeRoute = isCursorEngine(s.engine) ? "cursor" : "deepseek";
-  const cfg =
-    activeRoute === "cursor"
-      ? { url: s.cursorApiUrl || PBT.DEFAULTS.cursorApiUrl, model: s.cursorModel || PBT.DEFAULTS.cursorModel, apiKey: s.cursorApiKey || "bridge", label: "Cursor", timeoutMs: 95000 }
-      : { url: s.deepseekApiUrl || PBT.DEFAULTS.deepseekApiUrl, model: s.deepseekModel || PBT.DEFAULTS.deepseekModel, apiKey: s.deepseekApiKey, label: "DeepSeek", requireKey: true, timeoutMs: 28000 };
+  if (isCursorEngine(s.engine)) {
+    activeRoute = "cursor";
+    const cfg = {
+      url: s.cursorApiUrl || PBT.DEFAULTS.cursorApiUrl,
+      model: s.cursorModel || PBT.DEFAULTS.cursorModel,
+      apiKey: s.cursorApiKey || "bridge",
+      label: "Cursor",
+      timeoutMs: 95000,
+    };
+    return translateHttp(s, items, page, cfg);
+  }
+  if (isDeepLEngine(s.engine)) {
+    activeRoute = "deepl";
+    return translateDeepLHttp(s, items);
+  }
+  activeRoute = "deepseek";
+  const cfg = {
+    url: s.deepseekApiUrl || PBT.DEFAULTS.deepseekApiUrl,
+    model: s.deepseekModel || PBT.DEFAULTS.deepseekModel,
+    apiKey: s.deepseekApiKey,
+    label: "DeepSeek",
+    requireKey: true,
+    timeoutMs: 28000,
+  };
   return translateHttp(s, items, page, cfg);
 }

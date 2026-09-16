@@ -11,7 +11,7 @@ const PBT = {
     excludeCss: "",
   },
 
-  SECRET_KEYS: ["deepseekApiKey", "cursorApiKey"],
+  SECRET_KEYS: ["deepseekApiKey", "deeplApiKey", "cursorApiKey"],
 
   LANGS: [
     ["zh-CN", "简体中文"],
@@ -46,7 +46,7 @@ const PBT = {
   async loadAll() {
     const keys = [...PBT.publicKeys(), ...PBT.SECRET_KEYS];
     const stored = await chrome.storage.local.get(keys);
-    return { ...PBT.DEFAULTS, deepseekApiKey: "", cursorApiKey: "", ...stored };
+    return { ...PBT.DEFAULTS, deepseekApiKey: "", deeplApiKey: "", cursorApiKey: "", ...stored };
   },
 
   async save(patch) {

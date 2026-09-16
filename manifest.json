@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "双语网页",
   "short_name": "双语",
-  "version": "1.4.62",
+  "version": "1.4.64",
   "description": "一键整页替换翻译；DeepSeek / Cursor bridge。",
   "minimum_chrome_version": "116",
   "icons": {
@@ -33,6 +33,8 @@
     "<all_urls>",
     "https://api.deepseek.com/*",
     "https://*.deepseek.com/*",
+    "https://api.deepl.com/*",
+    "https://api-free.deepl.com/*",
     "http://127.0.0.1:47821/*",
     "http://localhost:47821/*"
   ],
