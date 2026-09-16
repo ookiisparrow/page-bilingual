@@ -366,7 +366,13 @@
     let rest = items;
     try {
       rest = await cheapFirst(items, my);
-      if (rest.length) applyRows(rest, await request(rest.map(({ id, text }) => ({ id, text }))), my);
+      if (rest.length) {
+        const reqItems = rest.map(({ id, text }) => ({ id, text }));
+        const onPartial = (partial) => {
+          if (my === runId) applyRows(rest, partial, my);
+        };
+        applyRows(rest, await request(reqItems, onPartial), my);
+      }
     } catch (e) {
       if (my === runId) failBatch(rest, e);
     } finally {
@@ -377,7 +383,14 @@
   function applyRows(items, rows, my) {
     if (my !== runId) return;
     const byId = new Map(rows.map((r) => [String(r.id), r.text]));
-    for (const it of items) for (const u of it.us) accept(u, byId.get(it.id));
+    for (const it of items) {
+      const dst = byId.get(String(it.id));
+      if (!dst) continue;
+      for (const u of it.us) {
+        if (u.el.dataset.pbtState === "ok") continue;
+        accept(u, dst);
+      }
+    }
   }
 
   /** Short Latin strings (nav, buttons, labels) → on-device Translator (~50 ms, free); § placeholders preserved.
@@ -425,18 +438,57 @@
     toast(String(e.message || e));
   }
 
-  async function request(items) {
-    engineCalls += 1;
-    globalThis.__pbtEngineCalls = engineCalls;
+  function batchMeta(items) {
     const blob = items.map((i) => i.text).join("\n").toLowerCase();
-    const msg = {
-      type: "PBT_BATCH",
+    return {
       items,
       targetLang: settings.targetLang,
       properNouns: off("nouns") ? [] : nouns.filter((t) => blob.includes(t.toLowerCase())).slice(0, 80),
       page: { title: document.title, host: location.host },
     };
-    const res = await withTimeout(chrome.runtime.sendMessage(msg), 100000, "扩展后台超时 100s（翻译引擎无响应）").catch((e) => {
+  }
+
+  async function requestStream(items, onPartial) {
+    const meta = batchMeta(items);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        fn(val);
+      };
+      const port = chrome.runtime.connect({ name: "pbt-stream" });
+      port.onMessage.addListener((msg) => {
+        if (msg.partialOnly && msg.partial?.length) onPartial?.(msg.partial);
+        if (msg.done) {
+          port.disconnect();
+          if (msg.ok) finish(resolve, msg.items || []);
+          else finish(reject, new Error(msg.error || "翻译失败"));
+        }
+      });
+      port.onDisconnect.addListener(() => {
+        if (chrome.runtime.lastError && !settled) {
+          finish(reject, new Error(chrome.runtime.lastError.message));
+        }
+      });
+      port.postMessage({ type: "PBT_BATCH_STREAM", ...meta });
+    });
+  }
+
+  async function request(items, onPartial) {
+    engineCalls += 1;
+    globalThis.__pbtEngineCalls = engineCalls;
+    if (!isCursor() && !off("stream") && onPartial) {
+      try {
+        return await withTimeout(requestStream(items, onPartial), 100000, "扩展后台超时 100s（翻译引擎无响应）");
+      } catch (e) {
+        chrome.runtime
+          .sendMessage({ type: "PBT_LOG_ERROR", message: String(e.message || e).slice(0, 400), source: "content", host: location.host, engine: settings.engine })
+          .catch(() => {});
+        throw e;
+      }
+    }
+    const res = await withTimeout(chrome.runtime.sendMessage({ type: "PBT_BATCH", ...batchMeta(items) }), 100000, "扩展后台超时 100s（翻译引擎无响应）").catch((e) => {
       chrome.runtime
         .sendMessage({ type: "PBT_LOG_ERROR", message: String(e.message || e).slice(0, 400), source: "content", host: location.host, engine: settings.engine })
         .catch(() => {});
